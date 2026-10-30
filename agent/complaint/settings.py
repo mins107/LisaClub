@@ -24,6 +24,11 @@ class Settings:
     neis_school_code: str       # 표준학교코드 (SD_SCHUL_CODE)
 
 
+def _code(name):
+    """코드 값은 첫 단어만 쓴다(값 뒤에 설명을 붙여 적어도 깨지지 않게)."""
+    return (os.environ.get(name, "").split() or [""])[0]
+
+
 def load_settings() -> Settings:
     return Settings(
         llm_base_url=os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1"),
@@ -35,6 +40,6 @@ def load_settings() -> Settings:
         history_window_days=int(os.environ.get("HISTORY_WINDOW_DAYS", "180")),
         recontact_hours=int(os.environ.get("RECONTACT_HOURS", "24")),
         neis_api_key=os.environ.get("NEIS_API_KEY", ""),
-        neis_office_code=os.environ.get("NEIS_OFFICE_CODE", ""),
-        neis_school_code=os.environ.get("NEIS_SCHOOL_CODE", ""),
+        neis_office_code=_code("NEIS_OFFICE_CODE"),
+        neis_school_code=_code("NEIS_SCHOOL_CODE"),
     )

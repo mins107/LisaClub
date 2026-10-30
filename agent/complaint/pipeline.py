@@ -4,9 +4,12 @@ LLM은 선택 요소이며, 근거(evidence)는 항상 매뉴얼 색인에서만
 """
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from . import rules as R
 from . import schedule as SC
+from . import tasks as TK
+from . import notices as NT
 from .llm import parse_json
 
 ROUTE_LABEL = {
@@ -101,14 +104,11 @@ class _Collector:
         return labels
 
 
-# 담임 교사에게 전달할 "필요한 행동". 부서마다 먼저 확인할 것이 다르다(권장 문구이며 매뉴얼 규정은 아니다).
-DEPT_CHECK = {
-    "교무/학사": "성적·출결 등 학사 관련 기록을 확인해 주세요",
-    "생활지도/상담": "학생의 교우 관계와 생활 상황, 이전 상담 내용을 확인해 주세요",
-    "학부모/교직원 소통": "학부모와의 연락·면담 이력을 확인해 주세요",
-    "학교 운영": "민원에서 말한 시설·급식·행사 등의 현황을 확인해 주세요",
-    "기타": "민원에서 말한 사실관계를 확인해 주세요",
-}
+# 담임 교사에게 전달할 "필요한 행동"의 부서별 확인 사항은 rules.DEPARTMENTS의 check 문구다(권장 문구이며 매뉴얼 규정은 아니다).
+DEPT_CHECK = {d["name"]: d["check"] for d in R.DEPARTMENTS}
+DEPT_CHECK[R.UNASSIGNED] = "민원에서 말한 사실관계를 확인해 주세요"
+for _n in R.GRADE_DEPTS + [R.GRADE_UNKNOWN]:
+    DEPT_CHECK[_n] = next(d["check"] for d in R.DEPARTMENTS if d["name"] == R.GRADE_TEMPLATE)
 
 
 def _summarize(llm, text):
@@ -135,7 +135,7 @@ def _homeroom_handoff(llm, text, student, dept, deadline, ev_assign, ev_due):
     to = f"{student.class_no[0]}학년 {int(student.class_no[1:])}반 담임 교사" if student else "담임 교사 (학년반 미입력)"
     summary = _summarize(llm, text)
     actions = [
-        {"text": DEPT_CHECK.get(dept, DEPT_CHECK["기타"]), "evidence": ev_assign},
+        {"text": DEPT_CHECK.get(dept, DEPT_CHECK[R.UNASSIGNED]), "evidence": ev_assign},
         {"text": f"확인한 내용을 민원대응팀에 알려 주세요 (처리 기한: {deadline})", "evidence": ev_due},
         {"text": "확인이 어렵거나 학부모 면담이 필요하면 민원대응팀에 먼저 알려 주세요", "evidence": []},
     ]
@@ -254,16 +254,17 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
                 "evidence": steps[sid]["evidence"]} for sid in STEPS if sid in steps]
 
     urg = R.urgency([h for h in mal if h[0].severity >= 3] if route == "ESCALATE" else [])
-    dept, _ = R.department(text)
+    dinfo = R.classify_department(text, student.class_no if student else None)
+    dept = dinfo["name"]
 
-    homeroom = None
+    homeroom, ev_assign, ev_due, ev_guide = None, [], [], []
     if route == "REJECTABLE":
-        col.add("공식 창구 외 경로로 학교민원을 신청하는 경우 접수창구를 민원인에게 안내 필요", "procedure", "공식 창구 안내")
+        ev_guide = col.add("공식 창구 외 경로로 학교민원을 신청하는 경우 접수창구를 민원인에게 안내 필요", "procedure", "공식 창구 안내")
         handler, deadline = "민원대응팀", "즉시 회신(종결 시 사유 통지)"
     elif route == "HANDLE":
         ev_assign = col.add("처리 담당자 또는 협조자 지정 단순 질의 또는 요청 사항 민원대응팀", "procedure", "담당자 지정")
         ev_due = col.add("처리 기한 단순민원 즉시 복합민원 7일 이내 관리자 총괄 민원 14일", "procedure", "처리 기한")
-        simple = dept == "기타" or not re.search(r"(확인|조사|사실관계|왜|이유)", text)
+        simple = dept == R.UNASSIGNED or not re.search(r"(확인|조사|사실관계|왜|이유)", text)
         handler = "민원대응팀" if simple else "담당(담임) 교사 협조 + 민원대응팀 총괄"
         deadline = "즉시" if simple else "7일 이내"
         if "담임" in handler:
@@ -295,6 +296,21 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
     if sched and sched["status"] == "ok":       # 학사일정 문의: 일정 API 결과로 직접 답하는 초안
         reply = sched["reply"]
         notes.append("학사일정 문의 - 나이스 학사일정 API 조회 결과로 답변 초안 작성(발송 전 일정 확인)")
+    first, last = TK.team_tasks(text, route, deadline, student, ev_assign, ev_due, ev_guide, bool(homeroom), sched, dept=dept,
+                              grade_dept=R.grade_department(student.class_no) if student else None)
+    notice_hits = []
+    if route == "HANDLE" and hasattr(store, "list_notice_plans"):     # 지금이 가정통신문 전달 시기인 주제의 민원이면 함께 안내
+        plans = store.list_notice_plans()
+        sends = {p["id"]: {x["season_year"] for x in p["sends"]} for p in plans}
+        notice_hits = NT.matching_plans(plans, dinfo["keywords"], datetime.now().date(), sends)
+        for n in notice_hits:
+            last.insert(0, {"phase": "민원인 응대", "text": f"가정통신문 '{n['title']}'({'전달함' if n['state'] == 'sent' else '아직 전달 전'})을 답변에 함께 안내",
+                            "reasons": [f"이 시기에 '{n['keyword']}' 문의가 늘어남", "권장 안내"], "evidence": []})
+    if homeroom and student:
+        homeroom["grade_department"] = R.grade_department(student.class_no)
+        homeroom["message"] = homeroom["message"].replace(
+            "※ 자동 분류", f"※ 학년부 공유: {homeroom['grade_department']}\n※ 자동 분류")
+    actions = first + actions + last          # 민원대응팀이 할 일: 담당자 문의 -> (악성 대응 조치) -> 회신
 
     if route == "ESCALATE":
         reasons = "\n".join(f"  - {c['text']} (근거 {', '.join(c['evidence'])})" for c in criteria["met"]) or "  - (자동 판정 가능한 기준 없음, 담당자 확인)"
@@ -314,10 +330,13 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         "student": student.display() if student else None,
         "reject": [h for h in hit_out if h["kind"] == "reject"],
         "malicious": [h for h in hit_out if h["kind"] == "malicious"],
-        "urgency": urg, "department": dept,
+        "urgency": urg, "department": dept, "department_reason": dinfo["reason"],
+        "department_desc": R.DEPT_DESC.get(dept, ""), "department_candidates": dinfo["candidates"],
+        "department_keywords": dinfo["matched"], "topic_keywords": dinfo["keywords"],
+        "grade_department": R.grade_department(student.class_no) if student else None,
         "handler": handler, "deadline": deadline, "notes": notes, "actions": actions,
         "criteria": criteria, "reply_draft": reply, "transfer_doc": transfer, "homeroom": homeroom,
-        "schedule": sched,
+        "schedule": sched, "notices": notice_hits,
         "llm_judge": judge or None, "llm_used": llm.available,
         "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out),
         "text_masked": text,

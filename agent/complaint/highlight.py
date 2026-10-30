@@ -259,7 +259,7 @@ def render_body(result, pdf_href=None, homeroom_footer=""):
     urg = result["urgency"]
     tiles = [("긴급도", f'<span class="pill {URGENCY_CLASS.get(urg, "mid")}">{html.escape(urg)}</span>'),
              ("민원 대상 학생", html.escape(result.get("student") or "학생 미상")),
-             ("분류 (담당 부서)", html.escape(result["department"])), ("처리 담당", html.escape(result["handler"])),
+             ("분류 (담당 부서)", html.escape(result["department"]) + (f'<div class="foot" style="margin:2px 0 0;font-weight:400">{html.escape(result["department_reason"])}</div>' if result.get("department_reason") else "")), ("처리 담당", html.escape(result["handler"])),
              ("처리 기한", html.escape(result["deadline"])), ("동일·유사 민원", f"{result['repeat_count']}회째"),
              ("민원 번호", f"#{result['complaint_id']}" if result.get("complaint_id") else "저장 안 함")]
     dl = "".join(f'<div class="tile"><dt>{k}</dt><dd>{v}</dd></div>' for k, v in tiles)

@@ -1,0 +1,35 @@
+{"student": "김서준", "class_no": "101", "text": "국어 수행평가 점수가 이해되지 않습니다. 채점 기준을 확인하고 이유를 알려 주세요.", "days_ago": 12, "status": "처리 중", "done_after_days": 0, "actor": "박교사", "memo": "교과 교사에게 채점표 요청함", "homeroom_sent": true}
+{"student": "이하윤", "class_no": "102", "text": "수학 서술형 채점이 다른 반과 달라 보입니다. 왜 이 점수인지 확인해 주세요.", "days_ago": 11, "status": "접수", "done_after_days": 0, "actor": "", "memo": "", "homeroom_sent": false}
+{"student": "정도현", "class_no": "204", "text": "중간고사 성적 이의 신청은 어떻게 하는지, 사실관계를 확인해 주세요.", "days_ago": 10, "status": "처리 중", "done_after_days": 0, "actor": "박교사", "memo": "", "homeroom_sent": false}
+{"student": "최지아", "class_no": "205", "text": "영어 듣기 평가에서 소리가 잘 안 들렸습니다. 재평가가 가능한지 확인 부탁드립니다.", "days_ago": 9, "status": "접수", "done_after_days": 0, "actor": "", "memo": "", "homeroom_sent": false}
+{"student": "한유진", "class_no": "301", "text": "기말고사 시험 문제에 오류가 있는 것 같습니다. 확인해 주세요.", "days_ago": 6, "status": "완료", "done_after_days": 4, "actor": "박교사", "memo": "정정 공지 완료", "homeroom_sent": false}
+{"student": "송민재", "class_no": "302", "text": "방과후 수업 신청은 어디서 하나요?", "days_ago": 20, "status": "완료", "done_after_days": 1, "actor": "김교사", "memo": "안내 완료", "homeroom_sent": false}
+{"student": "오서윤", "class_no": "103", "text": "우리 아이가 친구들에게 따돌림을 당하는 것 같습니다. 상황을 확인해 주세요. 이유를 알고 싶습니다.", "days_ago": 5, "status": "처리 중", "done_after_days": 0, "actor": "이교사", "memo": "학생과 면담 예정", "homeroom_sent": true}
+{"student": "임현우", "class_no": "201", "text": "같은 반 친구가 아이를 계속 괴롭힙니다. 학교폭력 신고 절차를 알고 싶습니다.", "days_ago": 14, "status": "완료", "done_after_days": 3, "actor": "이교사", "memo": "사안 접수 후 보호자 안내", "homeroom_sent": true}
+{"student": "강예린", "class_no": "304", "text": "복도에서 학생이 넘어져 다칠 뻔했습니다. 안전 점검을 확인해 주세요.", "days_ago": 8, "status": "완료", "done_after_days": 6, "actor": "이교사", "memo": "바닥 점검 완료", "homeroom_sent": false}
+{"student": "윤지호", "class_no": "105", "text": "벌점을 받았는데 억울합니다. 이유를 확인하고 싶습니다.", "days_ago": 3, "status": "접수", "done_after_days": 0, "actor": "", "memo": "", "homeroom_sent": false}
+{"student": "문채원", "class_no": "203", "text": "체험학습 신청서를 냈는데 출결이 결석으로 처리되었습니다. 확인해 주세요.", "days_ago": 13, "status": "완료", "done_after_days": 5, "actor": "김교사", "memo": "출결 정정 완료", "homeroom_sent": true}
+{"student": "배준영", "class_no": "306", "text": "겨울방학 시작일과 개학일이 언제인가요?", "days_ago": 2, "status": "완료", "done_after_days": 0, "actor": "김교사", "memo": "일정 안내", "homeroom_sent": false}
+{"student": "신다은", "class_no": "104", "text": "졸업 증명서를 발급받고 싶습니다.", "days_ago": 18, "status": "완료", "done_after_days": 1, "actor": "김교사", "memo": "", "homeroom_sent": false}
+{"student": "조민서", "class_no": "202", "text": "선택과목을 변경하고 싶습니다. 수강 신청 기간을 알려 주세요.", "days_ago": 7, "status": "완료", "done_after_days": 2, "actor": "최교사", "memo": "변경 기간 안내", "homeroom_sent": false}
+{"student": "권도윤", "class_no": "303", "text": "수업 시간표가 자주 바뀌어 불편합니다. 사유를 확인해 주세요.", "days_ago": 4, "status": "처리 중", "done_after_days": 0, "actor": "최교사", "memo": "", "homeroom_sent": false}
+{"student": "황서아", "class_no": "106", "text": "학교 와이파이가 자꾸 끊깁니다. 확인 부탁드립니다.", "days_ago": 2, "status": "처리 중", "done_after_days": 0, "actor": "정교사", "memo": "", "homeroom_sent": false}
+{"student": "안시우", "class_no": "206", "text": "온라인 수업 계정 비밀번호를 잊어버렸습니다.", "days_ago": 1, "status": "완료", "done_after_days": 0, "actor": "정교사", "memo": "재발급", "homeroom_sent": false}
+{"student": "서지안", "class_no": "305", "text": "대학 진학 상담을 받고 싶습니다. 수시 지원 전략을 상의하고 싶어요.", "days_ago": 6, "status": "완료", "done_after_days": 2, "actor": "한교사", "memo": "상담 일정 배정", "homeroom_sent": false}
+{"student": "홍가온", "class_no": "207", "text": "아이가 우울해하는데 심리 상담이 가능한가요?", "days_ago": 0.5, "status": "처리 중", "done_after_days": 0, "actor": "한교사", "memo": "상담교사 연결", "homeroom_sent": true}
+{"student": "남주원", "class_no": "307", "text": "도서관 이용 시간이 궁금합니다.", "days_ago": 9, "status": "완료", "done_after_days": 0, "actor": "윤교사", "memo": "", "homeroom_sent": false}
+{"student": "류하준", "class_no": "107", "text": "과학실 실험 안전 교육이 걱정됩니다. 확인해 주세요.", "days_ago": 16, "status": "완료", "done_after_days": 7, "actor": "백교사", "memo": "안전 교육 자료 공유", "homeroom_sent": false}
+{"student": "진서현", "class_no": "208", "text": "동아리 가입 신청은 언제까지인가요?", "days_ago": 5, "status": "완료", "done_after_days": 0, "actor": "고교사", "memo": "", "homeroom_sent": false}
+{"student": "노은우", "class_no": "308", "text": "교실 에어컨이 고장 났습니다. 수리해 주세요.", "days_ago": 11, "status": "처리 중", "done_after_days": 0, "actor": "행정실", "memo": "수리 업체 연락 중", "homeroom_sent": false}
+{"student": "전하린", "class_no": "108", "text": "화장실 청소 상태가 불량합니다.", "days_ago": 1.5, "status": "접수", "done_after_days": 0, "actor": "", "memo": "", "homeroom_sent": false}
+{"student": "백승현", "class_no": "209", "text": "수업료 환불은 어떻게 받나요?", "days_ago": 17, "status": "완료", "done_after_days": 2, "actor": "행정실", "memo": "환불 완료", "homeroom_sent": false}
+{"student": "유나윤", "class_no": "109", "text": "아이가 체육 시간에 다쳐서 병원에 갔습니다. 보건실 조치 기록을 확인해 주세요.", "days_ago": 7, "status": "완료", "done_after_days": 3, "actor": "양호교사", "memo": "기록 공유", "homeroom_sent": true}
+{"student": "마시은", "class_no": "210", "text": "독감이 유행인데 등교 기준이 어떻게 되나요?", "days_ago": 4, "status": "완료", "done_after_days": 0, "actor": "양호교사", "memo": "안내문 발송", "homeroom_sent": false}
+{"student": "고태윤", "class_no": "309", "text": "급식이 너무 차갑고 맛이 없습니다. 개선해 주세요.", "days_ago": 15, "status": "완료", "done_after_days": 4, "actor": "영양교사", "memo": "배식 방식 개선", "homeroom_sent": false, "late": true}
+{"student": "민라온", "class_no": "110", "text": "알레르기 식단을 따로 받을 수 있나요? 확인해 주세요.", "days_ago": 2, "status": "처리 중", "done_after_days": 0, "actor": "영양교사", "memo": "", "homeroom_sent": true}
+{"student": "구하늘", "class_no": "211", "text": "급식에서 이물질이 나왔습니다. 확인해 주세요.", "days_ago": 9, "status": "접수", "done_after_days": 0, "actor": "", "memo": "", "homeroom_sent": false}
+{"student": "차예준", "class_no": "310", "text": "수행평가 점수 이의 신청을 하고 싶습니다. 이유를 알려 주세요.", "days_ago": 25, "status": "완료", "done_after_days": 3, "actor": "박교사", "memo": "결과 안내함", "homeroom_sent": false}
+{"student": "차예준", "class_no": "310", "text": "수행평가 점수 이의 신청을 다시 하고 싶습니다. 이유를 알려 주세요.", "days_ago": 15, "status": "완료", "done_after_days": 2, "actor": "박교사", "memo": "결과 안내함", "homeroom_sent": false}
+{"student": "차예준", "class_no": "310", "text": "수행평가 점수 이의 신청을 또 하고 싶습니다. 이유를 알려 주세요.", "days_ago": 5, "status": "이첩", "done_after_days": 0, "actor": "교감", "memo": "3회 이상 반복, 상급기관 이첩 검토", "homeroom_sent": false}
+{"student": "탁은서", "class_no": "111", "text": "선생님 개인 번호 좀 알려주세요. 카톡으로 상담하고 싶어요.", "days_ago": 3, "status": "완료", "done_after_days": 0, "actor": "김교사", "memo": "공식 창구 안내", "homeroom_sent": false}
+{"student": "도윤아", "class_no": "212", "text": "담임 때문에 우리 애가 학교 가기 싫대요!! 이런 무능한 교사는 자격 없어요, 가만 안 둔다.", "days_ago": 2, "status": "처리 중", "done_after_days": 0, "actor": "교감", "memo": "관리자 면담 예정", "homeroom_sent": false}

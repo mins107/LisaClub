@@ -23,10 +23,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer, MetaData, String, Table, Text,
-                        UniqueConstraint, create_engine, false, func, inspect, or_, select, text)
+                        UniqueConstraint, create_engine, false, func, true, inspect, or_, select, text)
 from sqlalchemy.pool import StaticPool
 
 from .retriever import tokenize
+from .rules import DEPT_NAMES, UNASSIGNED
 
 SAME_STUDENT_SIM = 0.3    # 같은 학생의 과거 민원이 "동일·유사"로 보이는 기준(자카드 유사도)
 OTHER_STUDENT_SIM = 0.5   # 다른 학생의 민원은 더 비슷할 때만 참고용으로 보여 준다
@@ -35,6 +36,10 @@ SCAN_LIMIT = 500          # 내용 비교는 기간 안의 최근 N건만 (학�
 STATUSES = ["접수", "처리 중", "완료", "이첩"]      # 처리 상태. 완료·이첩은 처리가 끝난 상태
 OPEN_STATUSES = ["접수", "처리 중"]
 EVENT_KINDS = ["접수", "상태", "메모", "담임전달"]
+
+# 이전 4개 분류 -> 현재 부서 체계(근사 대응). 정확한 부서는 담당자가 확인한다.
+LEGACY_DEPARTMENT = {"교무/학사": "교무기획부", "생활지도/상담": "학생생활안전부", "학부모/교직원 소통": "교무기획부",
+                     "학교 운영": "교무기획부", "기타": UNASSIGNED}
 
 meta = MetaData()
 
@@ -92,6 +97,32 @@ complaint_events = Table(
     Column("status", String(10)),                          # 상태 변경이면 바뀐 상태
     Column("note", Text),
     Column("actor", String(50)),                           # 처리자(선택 입력)
+)
+
+notice_plans = Table(
+    "notice_plans", meta,
+    Column("id", Integer, primary_key=True),
+    Column("keyword", String(60), nullable=False, unique=True),     # 시즌 키워드 하나당 계획 하나
+    Column("related", Text, nullable=False),                        # 같이 늘어나는 키워드(JSON 목록)
+    Column("peak_month", Integer, nullable=False),                  # 민원이 늘어나는 달(1~12)
+    Column("lead_days", Integer, nullable=False),                   # 그 달 며칠 전부터 전달하는가
+    Column("department", String(40), nullable=False),               # 문의 창구 부서
+    Column("title", String(200), nullable=False),
+    Column("body", Text, nullable=False),                           # 가정통신문 초안
+    Column("evidence", Text, nullable=False),                       # 계획을 세운 근거(분석 결과 요약)
+    Column("active", Boolean, nullable=False, server_default=true()),
+    Column("created_at", DateTime, nullable=False),
+)
+
+notice_sends = Table(
+    "notice_sends", meta,
+    Column("id", Integer, primary_key=True),
+    Column("plan_id", Integer, ForeignKey("notice_plans.id"), nullable=False, index=True),
+    Column("season_year", Integer, nullable=False),                 # 어느 해 시즌에 전달했는가
+    Column("sent_at", DateTime, nullable=False),
+    Column("actor", String(50)),
+    Column("note", Text),
+    UniqueConstraint("plan_id", "season_year", name="uq_notice_send"),
 )
 
 
@@ -196,6 +227,8 @@ class Store:
                     c.execute(text(f"ALTER TABLE complaints ADD COLUMN {col.name} "
                                    f"{col.type.compile(dialect=self.engine.dialect)} {not_null.get(col.name, '')}"))
             c.execute(text("UPDATE complaints SET updated_at = created_at WHERE updated_at IS NULL"))
+            for old, new in LEGACY_DEPARTMENT.items():      # 이전 부서 체계로 저장된 민원을 새 부서 체계로 옮긴다(한 번만 일어남)
+                c.execute(text("UPDATE complaints SET department = :new WHERE department = :old"), {"new": new, "old": old})
 
     def _migrate_old_schema(self, url):
         """이전 구조(작성자 테이블 complainants, 흥분도 컬럼)를 만나면 새 구조로 바꾼다.
@@ -431,4 +464,97 @@ class Store:
         return {"total": len(rows), "by_status": by_status, "open": by_status["접수"] + by_status["처리 중"],
                 "overdue": overdue, "by_route": count("route"), "by_department": count("department"),
                 "homeroom_pending": sum(1 for r in rows if r.homeroom_needed and not r.homeroom_sent_at),
-                "daily": [(d.strftime("%m-%d"), n) for d, n in daily.items()]}
+                "daily": [(d.strftime("%m-%d"), n) for d, n in daily.items()],
+                "departments": self.department_stats(now)}
+
+    def department_stats(self, now=None):
+        """부서별 민원 현황. 부서마다 접수·진행 중·처리 끝(완료·이첩)·기한 초과·기한 넘겨 끝낸 건·평균 처리일·반복 민원·악성 의심·주요 주제."""
+        now = now or _now()
+        with self.engine.connect() as c:
+            rows = c.execute(select(complaints.c.created_at, complaints.c.department, complaints.c.status, complaints.c.deadline,
+                                    complaints.c.completed_at, complaints.c.route, complaints.c.repeat_count,
+                                    complaints.c.result_json)).all()
+        out = {d: {"total": 0, "open": 0, "done": 0, "overdue": 0, "late_done": 0, "days": [], "repeat": 0, "escalate": 0, "topics": {}}
+               for d in DEPT_NAMES}
+        for r in rows:
+            d = out.setdefault(r.department, {"total": 0, "open": 0, "done": 0, "overdue": 0, "late_done": 0, "days": [],
+                                              "repeat": 0, "escalate": 0, "topics": {}})
+            d["total"] += 1
+            d["repeat"] += r.repeat_count >= 2
+            d["escalate"] += r.route == "ESCALATE"
+            if r.status in OPEN_STATUSES:
+                d["open"] += 1
+                d["overdue"] += _due_info(r.created_at, r.deadline, r.status, r.completed_at, now)[1]
+            else:
+                d["done"] += 1
+                days = ((r.completed_at or r.created_at) - r.created_at).total_seconds() / 86400
+                d["days"].append(days)
+                n = due_days(r.deadline)
+                d["late_done"] += n is not None and days > n
+            try:
+                for kw in json.loads(r.result_json).get("department_keywords", []):
+                    d["topics"][kw] = d["topics"].get(kw, 0) + 1
+            except (ValueError, TypeError):
+                pass
+        for d in out.values():
+            d["avg_days"] = round(sum(d["days"]) / len(d["days"]), 1) if d["days"] else None
+            d["top_topics"] = sorted(d["topics"], key=lambda k: -d["topics"][k])[:3]
+            del d["days"], d["topics"]
+        return out
+
+    # ---- 시즌 분석과 가정통신문 계획 ----
+    def topic_rows(self):
+        """시즌 분석 입력: [(접수 날짜(현지), [키워드])]. 키워드는 분류 때 저장한 topic_keywords(없으면 department_keywords)."""
+        with self.engine.connect() as c:
+            rows = c.execute(select(complaints.c.created_at, complaints.c.result_json)).all()
+        out = []
+        for r in rows:
+            try:
+                res = json.loads(r.result_json)
+            except (ValueError, TypeError):
+                continue
+            kws = res.get("topic_keywords") or res.get("department_keywords") or []
+            out.append((r.created_at.replace(tzinfo=timezone.utc).astimezone().date(), list(kws)))
+        return out
+
+    def upsert_notice_plans(self, plans, now=None):
+        """새 시즌 키워드는 계획으로 추가하고, 이미 있는 키워드는 분석 결과(시기·연관 키워드·근거)만 갱신한다. 제목·본문은 그대로 둔다.
+        반환: 새로 추가한 건수."""
+        now, added = now or _now(), 0
+        with self.engine.begin() as c:
+            for p in plans:
+                row = c.execute(select(notice_plans.c.id).where(notice_plans.c.keyword == p["keyword"])).first()
+                vals = {"related": json.dumps(p["related"], ensure_ascii=False), "peak_month": p["peak_month"],
+                        "evidence": p["evidence"]}
+                if row:
+                    c.execute(notice_plans.update().where(notice_plans.c.id == row.id).values(**vals))
+                else:
+                    c.execute(notice_plans.insert().values(keyword=p["keyword"], lead_days=p["lead_days"], department=p["department"],
+                                                           title=p["title"], body=p["body"], active=True, created_at=now, **vals))
+                    added += 1
+        return added
+
+    def list_notice_plans(self):
+        """계획 목록(시기 빠른 순)과 전달 기록: [{id, keyword, related, peak_month, lead_days, department, title, body, evidence, active, sends}]."""
+        with self.engine.connect() as c:
+            plans = c.execute(select(notice_plans).order_by(notice_plans.c.peak_month, notice_plans.c.id)).mappings().all()
+            sends = c.execute(select(notice_sends).order_by(notice_sends.c.sent_at)).mappings().all()
+        out = []
+        for p in plans:
+            out.append({**{k: p[k] for k in ("id", "keyword", "peak_month", "lead_days", "department", "title", "body", "evidence")},
+                        "related": json.loads(p["related"]), "active": bool(p["active"]),
+                        "sends": [{"season_year": s["season_year"], "sent_at": _local(s["sent_at"]), "actor": s["actor"], "note": s["note"]}
+                                  for s in sends if s["plan_id"] == p["id"]]})
+        return out
+
+    def mark_notice_sent(self, plan_id, season_year, actor=None, note=None, now=None):
+        """가정통신문을 전달했다고 기록한다(계획·시즌 연도당 한 번). 이미 기록돼 있으면 False. 없는 계획이면 KeyError."""
+        with self.engine.begin() as c:
+            if not c.execute(select(notice_plans.c.id).where(notice_plans.c.id == plan_id)).first():
+                raise KeyError(plan_id)
+            if c.execute(select(notice_sends.c.id).where((notice_sends.c.plan_id == plan_id)
+                                                         & (notice_sends.c.season_year == season_year))).first():
+                return False
+            c.execute(notice_sends.insert().values(plan_id=plan_id, season_year=season_year, sent_at=now or _now(),
+                                                   actor=actor or None, note=note or None))
+        return True

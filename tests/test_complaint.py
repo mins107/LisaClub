@@ -457,3 +457,205 @@ def test_pipeline_uses_schedule_reply_only_for_handle():
 def SC_NONE():
     from agent.complaint.schedule import SchoolCalendar
     return SchoolCalendar()
+
+
+def test_team_tasks_by_complaint_content():
+    from agent.complaint import tasks as TK
+    assert TK.find_subject("국어 수행평가 점수가 이상합니다") == "국어"
+    assert TK.find_subject("수학여행 일정이 궁금합니다") is None            # 수학여행은 수학 과목이 아님
+    f, l = TK.team_tasks("국어 수행평가 점수가 이상합니다. 이유를 알려 주세요", "HANDLE", "7일 이내", None, ["E1"], ["E2"])
+    assert "국어 교과 교사에게 문의" in f[0]["text"] and f[0]["evidence"] == ["E1"] and f[0]["phase"] == "담당자 문의·확인"
+    assert "7일 이내" in l[0]["text"] and l[0]["evidence"] == ["E2"]
+    f, _ = TK.team_tasks("수행평가 점수가 이상합니다", "HANDLE", "즉시", None)
+    assert "과목" in f[0]["text"]                                             # 과목이 없으면 과목부터 확인
+    f, _ = TK.team_tasks("급식이 차갑고 화장실도 고장 났어요", "HANDLE", "즉시", None)
+    assert {"영양(교)사", "행정실"} <= {k for k in ("영양(교)사", "행정실") if any(k in a["text"] for a in f)}
+    f, _ = TK.team_tasks("우리 애가 따돌림을 당해요", "HANDLE", "7일 이내", None)
+    assert "학생생활안전부" in f[0]["text"]
+    f, _ = TK.team_tasks("뭔가 불편합니다", "HANDLE", "즉시", None)
+    assert "담당자" in f[0]["text"]                                           # 아무것도 못 읽어도 담당자 지정은 안내
+    assert TK.team_tasks("x", "ESCALATE", "14일", None) == ([], [])
+
+
+@needs_pdf
+def test_pipeline_puts_team_tasks_into_actions():
+    idx = build_index(PDF)
+    retr, store, llm = Retriever(idx), Store(), NullLLM()
+    res, _ = run("국어 수행평가 점수가 이해되지 않습니다. 채점 기준을 확인하고 싶습니다. 이유를 알려 주세요.",
+                 make_student("홍길동", "305"), retr, store, llm, save=False)
+    texts = [a["text"] for a in res["actions"]]
+    assert any("국어 교과 교사에게 문의" in t for t in texts) and any("담임 교사 전달" in t for t in texts)
+    assert res["actions"][-1]["phase"] == "민원인 응대" and "7일 이내" in res["actions"][-1]["text"]
+    res, _ = run("카톡으로 개인 번호 알려주세요", None, retr, store, llm, save=False)
+    assert res["route"] == "REJECTABLE" and "공식 접수 창구" in res["actions"][-1]["text"]
+
+
+def test_department_classification_validation_set():
+    """samples/dept_validation.jsonl: 부서 업무 설명을 보고 사람이 정한 정답과 키워드 분류를 비교한다."""
+    import json
+    rows = [json.loads(l) for l in open("samples/dept_validation.jsonl", encoding="utf-8")]
+    wrong = [(r["text"], r["expected"], R.classify_department(r["text"])["name"]) for r in rows
+             if R.classify_department(r["text"])["name"] != r["expected"]]
+    assert len(rows) >= 90 and not wrong, wrong
+    got = R.classify_department("국어 수행평가 점수 이의 신청")
+    assert got["candidates"][0]["name"] == "교수학습지원부" and got["reason"].startswith("민원의")
+
+
+@needs_pdf
+def test_escalate_keeps_content_department_and_no_management_department():
+    idx = build_index(PDF)
+    res, _ = run("칼 들고 찾아가서 가만 안 둔다. 성적 올려 놔라", None, Retriever(idx), Store(), NullLLM(), save=False)
+    assert res["route"] == "ESCALATE" and res["department"] == "교수학습지원부"
+    assert "관리(교감/교장)" not in R.DEPT_NAMES and len(R.DEPT_NAMES) == 17
+
+
+def test_department_stats_insights_and_dashboard(tmp_path):
+    from datetime import timedelta
+    from agent.complaint import insights as IN
+    from agent.complaint import store as st
+    from agent.complaint.dashboard import render_dashboard
+    s = Store()
+    res = _fake_result("수행평가 점수 문의")
+    res.update(department="교수학습지원부", deadline="7일 이내", department_keywords=["수행평가"])
+    ids = [s.save(res, None, None, None, False) for _ in range(4)]
+    s.set_status(ids[0], "완료", None, "김교사")
+    with s.engine.begin() as c:
+        c.execute(st.complaints.update().where(st.complaints.c.id.in_(ids[1:3])).values(created_at=st._now() - timedelta(days=9)))
+    stats = s.stats()
+    d = stats["departments"]["교수학습지원부"]
+    assert d["total"] == 4 and d["done"] == 1 and d["open"] == 3 and d["overdue"] == 2 and d["top_topics"] == ["수행평가"]
+    ins = IN.department_insights(stats["departments"], stats["total"])
+    assert ins and ins[0]["dept"] == "교수학습지원부" and {"overdue", "backlog"} <= set(ins[0]["flags"])
+    page = render_dashboard(stats, [], 0, {}, 1, 20, "")
+    assert "부서별 민원 현황" in page and "개선을 검토할 부서" in page and "교수학습지원부" in page and "기한 초과 2건" in page
+    assert IN.department_insights(Store().stats()["departments"], 0) == []
+
+
+def test_legacy_department_names_are_remapped(tmp_path):
+    from agent.complaint import store as st
+    db = str(tmp_path / "d.sqlite")
+    s = Store(db)
+    res = _fake_result("친구 문제")
+    res["department"] = "생활지도/상담"
+    cid = s.save(res, None, None, None, False)
+    assert Store(db).get_complaint(cid)["department"] == "학생생활안전부"
+
+
+def test_grade_department_follows_student_grade():
+    text = "수학 선생님이 수업 시간에 아이에게 소리를 질렀다고 합니다"
+    assert R.classify_department(text, "305")["name"] == "3학년부"
+    assert R.classify_department(text, "112")["name"] == "1학년부"
+    assert R.classify_department(text)["name"] == R.GRADE_UNKNOWN
+    assert R.classify_department("국어 수행평가 점수 문의", "305")["name"] == "교수학습지원부"     # 내용 부서가 우선
+    assert R.grade_department("205") == "2학년부" and R.grade_department(None) is None
+    assert "학년부" in R.DEPT_DESC["3학년부"]
+
+
+@needs_pdf
+def test_grade_department_in_pipeline_and_homeroom_message():
+    idx = build_index(PDF)
+    res, _ = run("담임 선생님이 수업 시간에 학생에게 소리를 질렀습니다. 사실관계를 확인해 주세요.", make_student("홍길동", "205"),
+                 Retriever(idx), Store(), NullLLM(), save=False)
+    assert res["department"] == "2학년부" and res["grade_department"] == "2학년부" and "2학년부: " in res["department_reason"]
+    texts = [a["text"] for a in res["actions"]]
+    assert any(t.startswith("2학년부에 협조 요청") for t in texts)
+
+
+def _season_rows():
+    from datetime import date
+    rows = []
+    for y in (2025, 2026):                    # 3월에는 학사일정·시간표, 6월에는 기말고사·성적이 늘어난다
+        rows += [(date(y, 3, 2 + i), ["학사일정", "시간표"]) for i in range(6)]
+        rows += [(date(y, 6, 1 + i), ["기말고사", "성적"]) for i in range(5)]
+        for m in (4, 5, 9, 10):
+            rows += [(date(y, m, 3 + i), ["급식"]) for i in range(2)]
+    return rows
+
+
+def test_season_report_finds_seasonal_and_correlated_keywords():
+    from datetime import date
+    from agent.complaint import analytics as AN
+    assert not AN.season_report([(date(2026, 3, 1), ["학사일정"])])["enough"]
+    rep = AN.season_report(_season_rows())
+    by = {k["keyword"]: k for k in rep["keywords"]}
+    assert rep["enough"] and by["학사일정"]["seasonal"] and by["학사일정"]["peak_month"] == 3
+    assert by["기말고사"]["peak_month"] == 6 and by["기말고사"]["counts"][5] == 10
+    assert "시간표" in [r["keyword"] for r in by["학사일정"]["related"]]           # 같은 달에 같이 늘어남
+    assert "성적" not in [r["keyword"] for r in by["학사일정"]["related"]]
+    assert not by["급식"]["seasonal"]                                            # 여러 달에 고르게 나옴
+    now = _season_rows() + [(date(2026, 10, 5 + i), ["상담"]) for i in range(8)]                # 끝나지 않은 이번 달은 분석에서 뺀다
+    assert "상담" in {k["keyword"] for k in AN.season_report(now)["keywords"]}
+    assert "상담" not in {k["keyword"] for k in AN.season_report(now, date(2026, 10, 31))["keywords"]}
+
+
+def test_notice_window_state_and_plans():
+    from datetime import date
+    from agent.complaint import analytics as AN
+    from agent.complaint import notices as NT
+    plan = {"id": 1, "keyword": "학사일정", "related": ["시간표"], "peak_month": 3, "lead_days": 14, "active": True, "title": "t"}
+    assert NT.window(3, 2026) == (date(2026, 2, 15), date(2026, 3, 31))
+    assert NT.plan_state(plan, set(), date(2026, 2, 14))["state"] == "waiting"
+    assert NT.plan_state(plan, set(), date(2026, 2, 15))["state"] == "due"
+    st = NT.plan_state(plan, set(), date(2026, 3, 31))
+    assert st["state"] == "due" and st["season_year"] == 2026
+    assert NT.plan_state(plan, {2026}, date(2026, 3, 10))["state"] == "sent"
+    st = NT.plan_state(plan, {2026}, date(2026, 4, 1))                              # 시기가 지나면 내년을 기다린다
+    assert st["state"] == "waiting" and st["season_year"] == 2027 and st["start"] == date(2027, 2, 15)
+    assert NT.plan_state({**plan, "peak_month": 1}, set(), date(2026, 12, 25))["season_year"] == 2027   # 연말에 1월 시즌 준비
+    plans = NT.plans_from_report(AN.season_report(_season_rows()))
+    assert {p["keyword"] for p in plans} >= {"학사일정", "기말고사"} and all("가정통신문" in p["title"] and p["body"] for p in plans)
+    assert NT.matching_plans([plan], ["시간표"], date(2026, 3, 5), {}) [0]["state"] == "due"
+    assert NT.matching_plans([plan], ["시간표"], date(2026, 8, 5), {}) == []
+
+
+def test_store_notice_plans_and_sends():
+    from agent.complaint import analytics as AN
+    from agent.complaint import notices as NT
+    s = Store()
+    plans = NT.plans_from_report(AN.season_report(_season_rows()))
+    assert s.upsert_notice_plans(plans) == len(plans) and s.upsert_notice_plans(plans) == 0     # 두 번째는 갱신만
+    lst = s.list_notice_plans()
+    p = next(x for x in lst if x["keyword"] == "학사일정")
+    assert p["peak_month"] == 3 and "시간표" in p["related"] and p["sends"] == []
+    assert s.mark_notice_sent(p["id"], 2026, "김교사", "알림장") is True
+    assert s.mark_notice_sent(p["id"], 2026) is False                                           # 같은 해에는 한 번만
+    assert [x["season_year"] for x in next(x for x in s.list_notice_plans() if x["id"] == p["id"])["sends"]] == [2026]
+    with pytest.raises(KeyError):
+        s.mark_notice_sent(9999, 2026)
+
+
+@needs_pdf
+def test_pipeline_mentions_notice_in_season_and_web_flow(tmp_path):
+    from datetime import date
+    from agent.complaint import analytics as AN
+    from agent.complaint import notices as NT
+    from agent.complaint.service import ComplaintService
+    svc = ComplaintService(PDF, ":memory:", "none")
+    svc.calendar = None
+    svc.store.upsert_notice_plans(NT.plans_from_report(AN.season_report(_season_rows())))
+    today = date.today()
+    plan = next(p for p in svc.store.list_notice_plans() if p["keyword"] == "기말고사")
+    st = NT.plan_state(plan, set(), today)
+    res, _ = svc.classify("기말고사 성적 처리 일정이 궁금합니다", "김하늘", "305", save=False)
+    in_season = st["state"] in ("due", "sent")
+    assert bool(res["notices"]) == in_season
+    assert any("가정통신문" in a["text"] for a in res["actions"]) == in_season
+    from agent.complaint import web
+    from http.server import ThreadingHTTPServer
+    import threading, urllib.request, urllib.parse, json as _json
+    web.Handler.service, web.Handler.out_root = svc, str(tmp_path)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        page = urllib.request.urlopen(base + "/").read().decode("utf-8")
+        assert "시즌별 민원 키워드와 가정통신문" in page and "3개월 이상" in page          # 데이터가 없으면 안내만
+        notices = _json.loads(urllib.request.urlopen(base + "/api/notices").read())
+        assert any(n["keyword"] == "기말고사" and n["state"] in ("due", "sent", "waiting") for n in notices)
+        req = urllib.request.Request(base + f"/notices/{plan['id']}/send",
+                                     urllib.parse.urlencode({"season_year": st["season_year"], "actor": "김교사"}).encode())
+        urllib.request.urlopen(req)
+        again = _json.loads(urllib.request.urlopen(base + "/api/notices").read())
+        assert next(n for n in again if n["id"] == plan["id"])["sends"][0]["actor"] == "김교사"
+    finally:
+        srv.shutdown()

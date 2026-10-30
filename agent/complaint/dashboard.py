@@ -2,10 +2,14 @@
 import html
 from urllib.parse import urlencode
 
+from .analytics import MIN_CORR, MIN_MONTHS_OF_DATA
+from .insights import MIN_DEPT_CASES, department_insights
 from .highlight import ROUTE_SHORT, URGENCY_CLASS, render_body
+from .notices import LEAD_DAYS
+from .rules import DEPT_DESC, DEPT_NAMES
 from .store import STATUSES
 
-DEPTS = ["교무/학사", "생활지도/상담", "학부모/교직원 소통", "학교 운영", "기타"]
+DEPTS = DEPT_NAMES
 URGENCIES = ["낮음", "보통", "높음", "긴급"]
 STATUS_CLASS = {"접수": "new", "처리 중": "doing", "완료": "done", "이첩": "esc"}
 ROUTE_CLASS = {"REJECTABLE": "reject", "HANDLE": "ok", "ESCALATE": "mal"}
@@ -27,6 +31,23 @@ DASH_CSS = """
 .b-t{height:8px;background:var(--border);border-radius:4px;overflow:hidden} .b-t i{display:block;height:100%;background:var(--primary)}
 .daily{display:flex;align-items:flex-end;gap:3px;height:56px} .daily div{flex:1;background:var(--primary);border-radius:3px 3px 0 0;min-height:2px}
 .daily-l{display:flex;justify-content:space-between;font-size:.7em;color:var(--muted);margin-top:2px}
+.dp{display:grid;grid-template-columns:150px 1fr auto;gap:8px;align-items:center;font-size:.82em;text-decoration:none;color:var(--text);margin:5px 0}
+.dp:hover .dn{color:var(--primary)} .dn{font-weight:700} .dm{color:var(--muted);font-size:.9em;white-space:nowrap}
+.stack{display:flex;height:12px;background:var(--border);border-radius:6px;overflow:hidden} .stack i{display:block;height:100%}
+.sg-done{background:var(--green)} .sg-open{background:var(--blue)} .sg-over{background:var(--red)}
+.lg{display:flex;flex-wrap:wrap;gap:12px;font-size:.76em;color:var(--muted);margin-top:6px} .lg b{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+.ins{margin:10px 0 0;padding:10px 12px;border-radius:10px;background:var(--soft);font-size:.86em}
+.ins h4{margin:0 0 4px;font-size:1em} .ins .fact{color:var(--muted);font-size:.92em} .ins ul{margin:4px 0 0;padding-left:18px}
+.hm{width:100%;border-collapse:separate;border-spacing:2px;font-size:.78em}
+.hm th{font-weight:700;color:var(--muted);text-align:center;padding:2px} .hm td.kw{white-space:nowrap;font-weight:700;padding-right:8px}
+.hm td.c{text-align:center;border-radius:4px;min-width:26px;height:24px;color:var(--text);background:color-mix(in srgb,var(--primary) calc(var(--v) * 1%),var(--soft))}
+.hm td.pk{outline:2px solid var(--amber);font-weight:800} .hm td.i{font-size:.9em;color:var(--muted);white-space:nowrap;padding-left:8px}
+.nt{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:8px 0}
+.nt h4{margin:0 0 3px;font-size:.95em} .nt .sm{margin:2px 0}
+.pl{display:inline-block;border-radius:10px;padding:0 9px;font-size:.78em;font-weight:800;margin-right:6px;color:var(--on-c)}
+.pl-due{background:var(--red)} .pl-waiting{background:var(--muted)} .pl-sent{background:var(--green)}
+.nt pre{white-space:pre-wrap;margin:6px 0} .nt form{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.nt input[type=text]{padding:5px 8px;font:inherit;font-size:.88rem;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:8px}
 .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:10px}
 .filters label{display:flex;flex-direction:column;font-size:.74em;color:var(--muted);gap:2px}
 .filters select,.filters input[type=text]{padding:6px 8px;font:inherit;font-size:.9rem;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:8px}
@@ -134,26 +155,111 @@ def _rows(rows):
             '<th>처리 상태</th><th>담임 전달</th></tr></thead><tbody>' + "".join(out) + "</tbody></table></div>")
 
 
-def render_dashboard(stats, rows, total, filters, page, per_page, form_html):
+def _dept_chart(stats):
+    """부서별 민원 현황(처리 끝 / 진행 중 / 기한 초과 누적 막대)과 개선을 검토할 부서 설명."""
+    depts, total = stats["departments"], stats["total"]
+    names = [n for n in DEPTS if n in depts and (depts[n]["total"] or not n.startswith(("미분류", "학년부(")))] +             [n for n in depts if n not in DEPTS]
+    top = max([depts[n]["total"] for n in names] + [1])
+    rows = []
+    for n in names:
+        d = depts[n]
+        done, over = d["done"], d["overdue"]
+        seg = "".join(f'<i class="{c}" style="width:{v * 100 // top}%"></i>' for c, v in
+                      (("sg-done", done), ("sg-open", d["open"] - over), ("sg-over", over)) if v)
+        meta = f'{d["total"]}건' + (f' · 초과 {over}' if over else "") + (f' · 평균 {d["avg_days"]}일' if d["avg_days"] is not None else "")
+        rows.append(f'<a class="dp" href="{html.escape(_qs({}, department=n))}" title="{html.escape(DEPT_DESC.get(n, ""))}">'
+                    f'<span class="dn">{html.escape(n)}</span><span class="stack">{seg}</span><span class="dm">{meta}</span></a>')
+    legend = ('<div class="lg"><span><b class="sg-done"></b>처리 끝(완료·이첩)</span><span><b class="sg-open"></b>진행 중</span>'
+              '<span><b class="sg-over"></b>기한 초과</span></div>')
+    ins = department_insights(depts, total)
+    if ins:
+        blocks = "".join(f'<div class="ins"><h4>{html.escape(i["dept"])}</h4><div class="fact">{html.escape(" · ".join(i["facts"]))}</div>'
+                         f'<ul>{"".join(f"<li>{html.escape(a)}</li>" for a in i["advice"])}</ul></div>' for i in ins)
+        note = f'<h3 style="margin-top:12px">개선을 검토할 부서</h3>{blocks}'
+    else:
+        note = (f'<div class="ins"><h4>개선을 검토할 부서</h4>현재 기준으로 개선 검토가 필요한 부서가 없습니다. '
+                f'부서 접수가 {MIN_DEPT_CASES}건 이상 쌓여야 판단하며, 지금은 표본이 적을 수 있습니다.</div>')
+    basis = ('<div class="sm" style="margin-top:8px">판단 기준(임의 시작값, 학교가 정한 값이 아님): 기한 초과·넘겨 처리 20% 이상, 진행 중 60% 이상, '
+             '반복 민원 30% 이상, 전체 민원 중 40% 이상 집중(전체 10건 이상), 미분류 20% 이상. 의사결정 전에 실제 민원 내용을 함께 확인하세요.</div>')
+    return f'<h3>부서별 민원 현황 (막대를 누르면 해당 부서 목록)</h3>{"".join(rows)}{legend}{note}{basis}'
+
+
+def _md(d):
+    return f"{d.month}/{d.day}"
+
+
+def render_season(report, plans, today):
+    """시즌 키워드 분석(달별 히트맵)과 가정통신문 전달 계획. plans는 notices.status_list의 결과."""
+    head = '<h2 id="notices">시즌별 민원 키워드와 가정통신문</h2>'
+    gen = ('<form method="post" action="/notices/generate" style="margin:6px 0">'
+           '<button class="btn" type="submit">분석 결과로 가정통신문 계획 만들기·갱신</button></form>')
+    if not report["enough"]:
+        return (f'<div class="box">{head}<p class="sm">달별 흐름을 보려면 서로 다른 달의 민원이 {MIN_MONTHS_OF_DATA}개월 이상 쌓여야 합니다. '
+                f'지금은 {report["months_of_data"]}개월 치입니다.</p></div>')
+    cells_head = "".join(f"<th>{m}월</th>" for m in range(1, 13))
+    rows = []
+    for k in report["keywords"]:
+        mx = max(k["counts"]) or 1
+        tds = "".join(f'<td class="c{" pk" if m + 1 == k["peak_month"] else ""}" style="--v:{c * 70 // mx if c else 0}" '
+                      f'title="{html.escape(k["keyword"])} {m + 1}월 {c}건">{c or ""}</td>' for m, c in enumerate(k["counts"]))
+        info = f'{k["peak_month"]}월 집중 · 평소의 {k["lift"]}배' if k["seasonal"] else "뚜렷한 시즌 없음"
+        rel = (" · 함께: " + ", ".join(f'{r["keyword"]}({r["r"]})' for r in k["related"])) if k["related"] else ""
+        rows.append(f'<tr><td class="kw">{html.escape(k["keyword"])}</td>{tds}<td class="i">{html.escape(info + rel)}</td></tr>')
+    seasonal = [k for k in report["keywords"] if k["seasonal"]]
+    summary = ("늘어나는 시기가 뚜렷한 키워드: " + ", ".join(f'<b>{html.escape(k["keyword"])}</b>({k["peak_month"]}월)' for k in seasonal)
+               if seasonal else "현재 기준으로 특정 달에 몰리는 키워드는 없습니다.")
+    heat = (f'<p class="sm">{report["months_of_data"]}개월 치 민원 {report["total"]}건 · 칸의 진하기는 키워드별 최대 건수 대비, 노란 테두리는 가장 많은 달. '
+            f'괄호 안 숫자는 같은 시기에 함께 늘어나는 정도(상관계수, {MIN_CORR} 이상만 표시)입니다.</p>'
+            f'<div class="list-wrap"><table class="hm"><thead><tr><th></th>{cells_head}<th></th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+            f'<p style="margin:8px 0 0">{summary}</p>')
+    due = [p for p in plans if p["state"] == "due"]
+    cards = []
+    for p in plans:
+        win = f'{_md(p["start"])} ~ {_md(p["end"])}'
+        sent = "".join(f'{x["season_year"]}년 {x["sent_at"]} {html.escape(x["actor"] or "")} 전달' for x in p["sends"][-1:])
+        form = ""
+        if p["state"] == "due":
+            form = (f'<form method="post" action="/notices/{p["id"]}/send"><input type="hidden" name="season_year" value="{p["season_year"]}">'
+                    f'<input type="text" name="actor" placeholder="처리자(선택)"><input type="text" name="note" placeholder="전달 방법(선택)">'
+                    f'<button class="btn" type="submit">전달함으로 표시</button></form>')
+        rel = f'<div class="sm">함께 늘어나는 키워드: {html.escape(", ".join(p["related"]))}</div>' if p["related"] else ""
+        cards.append(
+            f'<div class="nt"><h4><span class="pl pl-{p["state"]}">{p["label"]}</span>{html.escape(p["title"])}</h4>'
+            f'<div class="sm">{p["peak_month"]}월 민원 증가 → 전달 시기 {win}(늘어나는 달 {p["lead_days"]}일 전부터) · 문의 창구 {html.escape(p["department"])}</div>'
+            f'<div class="sm">근거: {html.escape(p["evidence"])}</div>{rel}'
+            + (f'<div class="sm">{sent}</div>' if sent else "")
+            + f'<details><summary class="sm" style="cursor:pointer">가정통신문 초안 보기</summary><pre id="nt-{p["id"]}">{html.escape(p["body"])}</pre>'
+            f'<button type="button" class="btn" data-nt="nt-{p["id"]}">복사</button></details>{form}</div>')
+    notes = (f'<h3 style="margin:14px 0 0">가정통신문 전달 계획 (지금 전달 필요 {len(due)}건)</h3>'
+             f'<p class="sm">늘어나는 달이 시작되기 {LEAD_DAYS}일 전부터 그 달 말까지가 전달 시기입니다. 이 프로그램은 직접 발송하지 않고, 담당자가 보낸 뒤 '
+             f'"전달함으로 표시"를 누르면 그해 시즌에 한 번 기록합니다.</p>'
+             f'{"".join(cards) or "<p class=sm>아직 계획이 없습니다. 위 버튼으로 만들어 보세요.</p>"}')
+    copy_js = ("<script>document.querySelectorAll('[data-nt]').forEach(function(b){b.onclick=function(){"
+               "navigator.clipboard.writeText(document.getElementById(b.dataset.nt).textContent);b.textContent='복사됨';};});</script>")
+    return f'<div class="box">{head}{heat}{gen}{notes}</div>{copy_js}'
+
+
+def render_dashboard(stats, rows, total, filters, page, per_page, form_html, season_html=""):
     """메인 화면: 요약 숫자, 그래프, 새 민원 입력, 조회 조건, 민원 목록."""
     bs = stats["by_status"]
     kpis = [("전체 민원", stats["total"], _qs({}), ""),
             ("진행 중 (접수·처리 중)", stats["open"], _qs({}, status="open"), ""),
             ("기한 초과", stats["overdue"], _qs({}, overdue=1), "is-alert" if stats["overdue"] else ""),
             ("담임 전달 대기", stats["homeroom_pending"], _qs({}, homeroom="pending"), "is-warn" if stats["homeroom_pending"] else ""),
+            *([("가정통신문 전달 필요", stats["notice_due"], "#notices", "is-warn" if stats["notice_due"] else "")]
+              if "notice_due" in stats else []),
             ("완료", bs["완료"], _qs({}, status="완료"), ""), ("이첩", bs["이첩"], _qs({}, status="이첩"), "")]
     kp = "".join(f'<a class="kpi {cls}" href="{html.escape(h)}"><div class="n">{n}</div><div class="l">{html.escape(l)}</div></a>'
                  for l, n, h, cls in kpis)
     mx = max([stats["total"], 1])
     st_items = [(s, s, bs[s]) for s in STATUSES]
     rt_items = [(k, ROUTE_SHORT[k], stats["by_route"].get(k, 0)) for k in ROUTE_SHORT]
-    dp_items = [(d, d, stats["by_department"].get(d, 0)) for d in DEPTS]
     daily = stats["daily"]
     dmax = max([n for _, n in daily] + [1])
     cols = "".join(f'<div title="{d} · {n}건" style="height:{max(n * 100 // dmax, 4)}%"></div>' for d, n in daily)
     charts = (f'<div class="charts"><div class="chart"><h3>처리 상태</h3>{_bars(st_items, mx, lambda k: _qs({}, status=k))}</div>'
               f'<div class="chart"><h3>분류</h3>{_bars(rt_items, mx, lambda k: _qs({}, route=k))}</div>'
-              f'<div class="chart"><h3>담당 부서</h3>{_bars(dp_items, mx, lambda k: _qs({}, department=k))}</div>'
+              f'<div class="chart" style="grid-column:1/-1">{_dept_chart(stats)}</div>'
               f'<div class="chart" style="grid-column:1/-1"><h3>최근 {len(daily)}일 접수 건수</h3><div class="daily">{cols}</div>'
               f'<div class="daily-l"><span>{daily[0][0]}</span><span>{daily[-1][0]}</span></div></div></div>')
     pages = max((total + per_page - 1) // per_page, 1)
@@ -162,7 +268,7 @@ def render_dashboard(stats, rows, total, filters, page, per_page, form_html):
     nxt = f'<a class="btn" href="{html.escape(_qs(f, page=page + 1))}">다음 →</a>' if page < pages else ""
     pager = f'<div class="pager">{prev}<span>{page} / {pages} 쪽 · 총 {total}건</span>{nxt}</div>' if total else ""
     return (f'<div class="kpis">{kp}</div><div class="dash"><div class="dash-left" id="new">{form_html}</div>'
-            f'<div>{charts}<div class="box"><h2>민원 목록</h2>{_filters_form(filters)}{_rows(rows)}{pager}</div></div></div>')
+            f'<div>{charts}{season_html}<div class="box"><h2>민원 목록</h2>{_filters_form(filters)}{_rows(rows)}{pager}</div></div></div>')
 
 
 def _stepper(status):

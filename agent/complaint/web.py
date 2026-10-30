@@ -12,11 +12,13 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .dashboard import DASH_CSS, render_dashboard, render_detail
+from .analytics import season_report
+from .dashboard import DASH_CSS, render_dashboard, render_detail, render_season
+from .notices import plans_from_report, status_list as notice_status
 from .highlight import PAGE_SCRIPT, STYLE, render_body
 from .service import ComplaintService
 
@@ -133,7 +135,11 @@ class Handler(BaseHTTPRequestHandler):
             status=filters.get("status"), route=filters.get("route"), department=filters.get("department"),
             urgency=filters.get("urgency"), homeroom=filters.get("homeroom"), overdue=bool(filters.get("overdue")),
             q=filters.get("q"), page=page, per_page=PER_PAGE)
-        body = render_dashboard(store.stats(), rows, total, filters, page, PER_PAGE, form_html)
+        stats = store.stats()
+        report = season_report(store.topic_rows(), date.today())
+        plans = notice_status(store.list_notice_plans())
+        stats["notice_due"] = sum(1 for p in plans if p["state"] == "due")
+        body = render_dashboard(stats, rows, total, filters, page, PER_PAGE, form_html, render_season(report, plans, date.today()))
         self._send(code, _layout(body))
 
     def _pdf_href(self, case_id):
@@ -168,6 +174,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/complaints/(\d+)$", path)
         if m:
             return self._detail(int(m.group(1)), new=bool(qs.get("new")))
+        if path == "/api/notices":
+            return self._json(200, [{**p, "start": p["start"].isoformat(), "end": p["end"].isoformat()}
+                                    for p in notice_status(self.service.store.list_notice_plans())])
         m = re.match(r"^/cases/([^/]+)/([^/]+)$", path)
         if m and CASE_ID.match(m.group(1)) and m.group(2) in FILES:
             f = os.path.join(self.out_root, m.group(1), m.group(2))
@@ -182,6 +191,13 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/complaints/(\d+)/(record|homeroom)$", path)
         if m:
             return self._post_progress(int(m.group(1)), m.group(2))
+        if path == "/notices/generate":
+            store = self.service.store
+            store.upsert_notice_plans(plans_from_report(season_report(store.topic_rows(), date.today())))
+            return self._redirect("/#notices")
+        m = re.match(r"^/notices/(\d+)/send$", path)
+        if m:
+            return self._post_notice_sent(int(m.group(1)))
         if path not in ("/", "/classify", "/api/classify"):
             return self._send(404, "찾을 수 없습니다.", "text/plain; charset=utf-8")
         is_json = path == "/api/classify"
@@ -236,6 +252,17 @@ class Handler(BaseHTTPRequestHandler):
         notice = ('<a class="back" href="/">← 대시보드로</a><div class="box" style="margin-top:10px"><b>시험 입력입니다.</b> '
                   'DB에 저장하지 않아 대시보드에 나타나지 않고 처리 경과도 기록할 수 없습니다.</div>')
         self._send(200, _layout(notice + render_body(res, self._pdf_href(case_id))))
+
+    def _post_notice_sent(self, pid):
+        try:
+            v = self._read_form()
+            year = int(v.get("season_year") or 0)
+            self.service.store.mark_notice_sent(pid, year, (v.get("actor") or "").strip(), (v.get("note") or "").strip())
+        except KeyError:
+            return self._not_found()
+        except (ValueError, UnicodeDecodeError):
+            return self._send(400, "요청 형식이 올바르지 않습니다.", "text/plain; charset=utf-8")
+        self._redirect("/#notices")
 
     def _post_progress(self, cid, action):
         store = self.service.store
