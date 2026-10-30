@@ -1,0 +1,15 @@
+# Render 배포 설정(Blueprint). Render 대시보드 > New > Blueprint 에서 이 저장소를 고르면 읽는다.
+services:
+  - type: web
+    name: school-complaint
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # DB 파일이 없으면 예시 민원으로 한 번 채운 뒤 서버를 켠다. 무료 플랜은 재배포·재시작 때 디스크가 초기화되어 예시 데이터로 돌아간다.
+    startCommand: "[ -f data/complaints.sqlite ] || python samples/seed_demo_db.py; python -m agent.complaint.web --host 0.0.0.0 --llm none"
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: SCHOOL_NAME
+        sync: false          # 대시보드에서 직접 입력(비워도 동작)

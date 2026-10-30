@@ -361,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))   # 호스팅(Render 등)이 PORT를 준다
     ap.add_argument("--llm", choices=["auto", "on", "none"], default="auto")
     ap.add_argument("--pdf")
     ap.add_argument("--db")
