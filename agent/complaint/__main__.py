@@ -1,4 +1,4 @@
-"""터미널 실행: python -m agent.complaint --demo | --text "민원" [--name 홍길동 --phone-last4 1234]
+"""터미널 실행: python -m agent.complaint --demo | --text "민원" [--student 홍길동 --class-no 305]
 웹 화면은 python -m agent.complaint.web"""
 import argparse
 import json
@@ -12,8 +12,8 @@ DEMO = "samples/demo_complaints.jsonl"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--text")
-    ap.add_argument("--name", help="민원인 이름 (--phone-last4와 함께 쓰면 작성자 이력을 반영)")
-    ap.add_argument("--phone-last4", help="민원인 연락처 끝 4자리")
+    ap.add_argument("--student", help="민원 대상 학생 이름 (--class-no와 함께 쓰면 같은 학생의 과거 이력을 반영)")
+    ap.add_argument("--class-no", help="학년반 숫자 3자리. 3학년 5반 = 305")
     ap.add_argument("--demo", action="store_true")
     ap.add_argument("--pdf")
     ap.add_argument("--out", default="out")
@@ -34,12 +34,12 @@ def main():
     if a.demo:
         cases = [json.loads(l) for l in open(DEMO, encoding="utf-8") if l.strip()]
     else:
-        cases = [{"text": a.text, "name": a.name, "phone_last4": a.phone_last4,
+        cases = [{"text": a.text, "student": a.student, "class_no": a.class_no,
                   "received_at": a.received_at, "call_minutes": a.call_minutes}]
 
     for i, c in enumerate(cases, 1):
         try:
-            res, used = svc.classify(c["text"], c.get("name"), c.get("phone_last4"),
+            res, used = svc.classify(c["text"], c.get("student"), c.get("class_no"),
                                      c.get("received_at"), c.get("call_minutes"))
         except ValueError as e:
             raise SystemExit(str(e))

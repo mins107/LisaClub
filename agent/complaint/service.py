@@ -12,7 +12,7 @@ from .manual_index import build_index
 from .pipeline import run
 from .retriever import Retriever
 from .settings import load_settings
-from .store import Store, make_author
+from .store import Store, make_student
 
 
 class ComplaintService:
@@ -28,21 +28,21 @@ class ComplaintService:
         self.store = Store(db or s.database_url, s.history_window_days, s.recontact_hours)
         self._lock = threading.Lock()      # sqlite 이력 갱신을 요청 간에 직렬화
 
-    def classify(self, text, name=None, phone=None, received_at=None, call_minutes=None, save=True):
+    def classify(self, text, student=None, class_no=None, received_at=None, call_minutes=None, save=True):
         """반환: (result dict, 사용된 근거 목록).
-        작성자는 이름 + 연락처 끝자리로 식별한다. 둘 다 없으면 작성자 미상이라 작성자 기준 이력 판단은 하지 않는다.
-        이름만 있거나 연락처가 4자리 미만이면 ValueError."""
-        author = make_author(name, phone)
+        민원 대상 학생은 학생 이름 + 학년반(305 등)으로 식별한다. 둘 다 없으면 학생 미상이라 학생 기준 이력 판단은 하지 않는다.
+        하나만 있거나 학년반 형식이 틀리면 ValueError."""
+        stu = make_student(student, class_no)
         with self._lock:
-            return run(text, author, self.retr, self.store, self.llm,
+            return run(text, stu, self.retr, self.store, self.llm,
                        received_at=received_at or None, call_minutes=call_minutes, save=save)
 
     def save_outputs(self, result, used, out_dir):
-        """근거 형광펜 PDF, result.json, report.html을 out_dir에 쓰고 근거별 확대 이미지를 돌려준다."""
+        """근거 형광펜 PDF, result.json, report.html을 out_dir에 쓴다."""
         os.makedirs(out_dir, exist_ok=True)
-        snippets = annotate(self.pdf, used, out_dir)[1] if used else {}
+        if used:
+            annotate(self.pdf, used, out_dir)
         with open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         with open(os.path.join(out_dir, "report.html"), "w", encoding="utf-8") as f:
-            f.write(render_page(result, snippets, pdf_href="evidence_highlighted.pdf" if used else None))
-        return snippets
+            f.write(render_page(result, pdf_href="evidence_highlighted.pdf" if used else None))

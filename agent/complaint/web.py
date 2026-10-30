@@ -13,7 +13,6 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .extract import extract_author
 from .highlight import PAGE_SCRIPT, STYLE, render_body
 from .service import ComplaintService
 
@@ -50,17 +49,7 @@ FORM_SCRIPT = """
 if(!t||!f)return;
 function u(){c.textContent=t.value.length+' / __MAX__자'}
 t.addEventListener('input',u);u();
-document.querySelectorAll('[data-sample]').forEach(function(b){b.addEventListener('click',function(){t.value=b.dataset.sample;u();t.focus();find(false)})});
-var nm=document.getElementById('nm'),ph=document.getElementById('ph'),note=document.getElementById('auto-note'),timer=null;
-function find(force){var v=t.value;if(v.trim().length<4)return;
-fetch('/api/extract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:v})})
-.then(function(r){return r.json()}).then(function(d){var m=[];
-if(d.name&&(force||!nm.value||nm.dataset.auto)){nm.value=d.name;nm.dataset.auto='1';m.push('이름 '+d.name)}
-if(d.phone_last4&&(force||!ph.value||ph.dataset.auto)){ph.value=d.phone_last4;ph.dataset.auto='1';m.push('연락처 끝 '+d.phone_last4)}
-note.textContent=m.length?'민원 내용에서 찾아 입력했습니다: '+m.join(', ')+' — 맞는지 확인하세요.':(force?'민원 내용에서 작성자 정보를 찾지 못했습니다. 직접 입력해 주세요.':'')}).catch(function(){})}
-t.addEventListener('input',function(){clearTimeout(timer);timer=setTimeout(function(){find(false)},700)});
-[nm,ph].forEach(function(e){e.addEventListener('input',function(){delete e.dataset.auto})});
-document.getElementById('find-author').addEventListener('click',function(){find(true)});
+document.querySelectorAll('[data-sample]').forEach(function(b){b.addEventListener('click',function(){t.value=b.dataset.sample;u();t.focus()})});
 f.addEventListener('submit',function(){g.disabled=true;g.textContent='분류 중…'});
 window.addEventListener('pageshow',function(){g.disabled=false;g.textContent='분류하기'});
 var r=document.getElementById('result')||document.querySelector('.err');if(r)r.scrollIntoView({block:'start'});})();
@@ -68,7 +57,6 @@ var r=document.getElementById('result')||document.querySelector('.err');if(r)r.s
 
 SAMPLES = [("개인 연락처 요청", "선생님 개인 번호 좀 알려주세요. 카톡으로 상담하고 싶어요."),
            ("일반 문의", "수행평가 점수가 이해되지 않습니다. 채점 기준을 확인하고 싶습니다."),
-           ("작성자 포함", "저는 홍길동입니다. 어제 담임 선생님과 통화했는데 숙제 양이 너무 많습니다. 줄여 주셨으면 합니다. 연락처는 010-1234-5678입니다."),
            ("폭언·협박", "담임 때문에 우리 애가 학교 가기 싫대요!! 이게 말이 됩니까?? 당장 책임지세요. 이런 무능한 교사는 자격 없어요, 가만 안 둡니다.")]
 
 
@@ -92,12 +80,10 @@ def _form(v=None, error=""):
 <textarea id="t" name="text" maxlength="{MAX_TEXT}" placeholder="접수한 민원 내용을 그대로 붙여넣으세요." required>{g('text')}</textarea>
 <div class="ta-foot"><span id="cnt">0 / {MAX_TEXT}자</span><span>예시 넣기 {samples}</span></div>
 <div class="groups">
-<fieldset><legend>작성자 <small>선택</small></legend><div class="fields">
-<label>이름<input type="text" name="name" id="nm" value="{g('name')}" placeholder="예: 홍길동" style="width:150px"></label>
-<label>연락처 끝 4자리<input type="text" name="phone" id="ph" value="{g('phone')}" placeholder="예: 1234" maxlength="4" inputmode="numeric" pattern="[0-9]{{4}}" style="width:120px"></label></div>
-<p class="hint" style="margin-top:10px"><button type="button" class="btn" id="find-author">민원 내용에서 작성자 찾기</button>
-<span id="auto-note" role="status"></span></p>
-<p class="hint">민원 내용에 "성명: 홍길동", "저는 홍길동입니다", 전화번호가 있으면 자동으로 채웁니다(채운 값은 꼭 확인하세요). 이름과 연락처 끝자리를 둘 다 입력하면 같은 사람의 과거 이력(반복 민원, 종결 직후 재접촉, 과거 악성 이력)을 반영합니다. 둘 다 비우면 '작성자 미상'으로 저장합니다.</p></fieldset>
+<fieldset><legend>민원 대상 학생 <small>선택</small></legend><div class="fields">
+<label>학생 이름<input type="text" name="student" value="{g('student')}" placeholder="예: 홍길동" style="width:150px"></label>
+<label>학년반<input type="text" name="class_no" value="{g('class_no')}" placeholder="예: 305" maxlength="3" inputmode="numeric" pattern="[1-6][0-9]{{2}}" style="width:110px"></label></div>
+<p class="hint">학생 이름과 학년반을 둘 다 입력하면 같은 학생에 대한 과거 이력(반복 민원, 종결 직후 재접촉, 과거 악성 이력)을 반영합니다. 학년반은 3학년 5반 → 305처럼 숫자 3자리입니다. 둘 다 비우면 '학생 미상'으로 저장합니다.</p></fieldset>
 <fieldset><legend>접수 정보 <small>선택</small></legend><div class="fields">
 <label>접수 시각<input type="datetime-local" name="received_at" value="{g('received_at')}"></label>
 <label>통화·면담 시간(분)<input type="number" name="call_minutes" min="0" step="1" value="{g('call_minutes')}" style="width:130px"></label></div>
@@ -137,12 +123,6 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(min(n, 64 * 1024))
         is_json = path == "/api/classify"
-        if path == "/api/extract":          # 민원 내용에서 작성자(이름·연락처 끝자리) 찾기. 저장하지 않는다.
-            try:
-                text = str(json.loads(raw or b"{}").get("text") or "")[:MAX_TEXT]
-            except (ValueError, AttributeError):
-                return self._send(400, "요청 형식이 올바르지 않습니다.", "text/plain; charset=utf-8")
-            return self._send(200, json.dumps(extract_author(text), ensure_ascii=False), "application/json; charset=utf-8")
         if path not in ("/", "/api/classify"):
             return self._send(404, "찾을 수 없습니다.", "text/plain; charset=utf-8")
         try:
@@ -178,10 +158,10 @@ class Handler(BaseHTTPRequestHandler):
 
         case_id = f"web-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}"
         try:
-            res, used = self.service.classify(text, v.get("name"), v.get("phone"), received, minutes,
+            res, used = self.service.classify(text, v.get("student"), v.get("class_no"), received, minutes,
                                               save=not v.get("nosave"))
-            snippets = self.service.save_outputs(res, used, os.path.join(self.out_root, case_id))
-        except ValueError as e:         # 이름·연락처 입력 오류
+            self.service.save_outputs(res, used, os.path.join(self.out_root, case_id))
+        except ValueError as e:         # 학생 이름·학년반 입력 오류
             if is_json:
                 return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False), "application/json; charset=utf-8")
             return self._send(400, _page(_form(v, str(e))))
@@ -194,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
         if is_json:
             return self._send(200, json.dumps(res, ensure_ascii=False), "application/json; charset=utf-8")
         href = f"/cases/{case_id}/evidence_highlighted.pdf" if used else None
-        self._send(200, _page(_form(v), render_body(res, snippets, href)))
+        self._send(200, _page(_form(v), render_body(res, href)))
 
     def log_message(self, fmt, *args):      # 민원 내용이 로그에 남지 않도록 요청 줄만 기록
         print(f"[web] {self.command} {urlparse(self.path).path} -> {args[1] if len(args) > 1 else ''}")

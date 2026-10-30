@@ -14,27 +14,54 @@ ROUTE_LABEL = {
     "ESCALATE": "악성(특이) 민원 의심 - 상위기관 이전 문서 제작",
 }
 
+# 현장 조치를 한 단계씩 쪼개 둔다. 여러 악성 유형에서 같은 단계가 나오면 한 줄로 합쳐 보여 준다.
+# 아래 순서가 화면에 보이는 순서다(안전 확보 -> 증거 확보 -> 응대 -> 보고 -> 후속 조치).
+STEPS = {
+    "police": ("안전 확보·신고", "경찰에 신고 (위험물이면 소방서에도)"),
+    "help": ("안전 확보·신고", "관리자를 부르고 주변 동료에게 도움 요청"),
+    "separate": ("안전 확보·신고", "피해 교직원을 현장에서 분리하고 응급조치"),
+    "calm": ("안전 확보·신고", "민원인을 진정시키고 경고, 다른 민원인은 대피"),
+    "record": ("증거 확보", "녹음·녹화 내용 확인"),
+    "post_evidence": ("증거 확보", "게시물 증거 확보"),
+    "warn": ("민원인 응대", "관련 법령에 따라 처벌받을 수 있음을 고지"),
+    "end": ("민원인 응대", "상담이 어렵다고 안내하고 통화·면담 종료"),
+    "recontact1": ("민원인 응대", "재접촉 1차 (과거 악성 이력): 진정되면 정상 응대하고, 폭언이 이어지면 통화 종료"),
+    "recontact2": ("민원인 응대", "재접촉 2차 이상 (과거 악성 이력): 상급자(교감 등)가 응대해 불만을 듣고 경고한 뒤 종료"),
+    "letter": ("민원인 응대", "법적 조치 가능성을 담은 경고문 발송"),
+    "block": ("민원인 응대", "출입·면담 제한 등으로 교직원과의 접촉 차단 (예약 면담, 관리자 면담, 서면·온라인 창구로 전환)"),
+    "report": ("보고·보호", "관리자에게 보고"),
+    "rest": ("보고·보호", "피해 교직원에게 휴게시간 부여"),
+    "legal": ("후속 조치", "법적 대응 검토·협의"),
+}
+# 악성 유형 -> (필요한 단계 목록, 매뉴얼에서 근거를 찾을 문구)
 ACTIONS = {
-    "assault": ("즉시 경찰 신고와 관리자 호출, 피해 교직원 분리 및 응급조치", "폭행 발생 징후 즉시 주변에 도움 요청 담당자 현장에서 분리조치 경찰 신고"),
-    "weapon": ("경찰·소방서 우선 신고, 침착하게 주변 동료에게 도움 요청", "위험물 소지 확인 시 경찰 소방서 우선 신고 조치"),
-    "damage": ("민원인 진정 및 경고, 경찰 신고, 타 민원인 대피", "집기 또는 물품 등을 파손하는 경우 민원인 진정 및 경고 안전요원 경찰 동행"),
-    "threat": ("녹음 확인, 법적 조치 가능성 고지 후 종료, 관리자 보고", "폭언 등을 계속하시면 정상적인 상담이 어렵고 관련 법령에 따라 처벌받을 수 있습니다"),
-    "abuse": ("녹음 확인, 통화곤란 안내 후 종료, 관리자 보고 및 휴게시간 부여", "지속적인 폭언 등으로 더 이상 상담이 어렵습니다 통화를 종료하겠습니다"),
-    "insult": ("녹음 확인, 통화곤란 안내 후 종료, 관리자 보고", "지속적인 폭언 등으로 더 이상 상담이 어렵습니다 통화를 종료하겠습니다"),
-    "sexual": ("민원 상담 즉시 종료, 피해 교직원 분리, 관리자 보고 및 법적 대응 검토", "민원 상담 종료 폭언 성희롱 발생 시 민원 면담 종료 가능"),
-    "stalking": ("교직원 접촉 차단(예약 면담, 관리자 면담, 서면·온라인 창구 전환)", "보호자 외부인의 특이민원에 대해서는 일시적 출입 면담 제한 예약 면담 학교관리자 면담"),
-    "doxxing": ("게시물 증거 확보, 경고문 발송, 법적 조치 협의", "온라인 민원 경고공문 통지 법적조치 등을 취할 수 있다는 경고문구"),
+    "assault": (["police", "help", "separate"], "폭행 발생 징후 즉시 주변에 도움 요청 담당자 현장에서 분리조치 경찰 신고"),
+    "weapon": (["police", "help"], "위험물 소지 확인 시 경찰 소방서 우선 신고 조치"),
+    "damage": (["calm", "police"], "집기 또는 물품 등을 파손하는 경우 민원인 진정 및 경고 안전요원 경찰 동행"),
+    "threat": (["record", "warn", "end", "report"], "폭언 등을 계속하시면 정상적인 상담이 어렵고 관련 법령에 따라 처벌받을 수 있습니다"),
+    "abuse": (["record", "end", "report", "rest"], "지속적인 폭언 등으로 더 이상 상담이 어렵습니다 통화를 종료하겠습니다"),
+    "insult": (["record", "end", "report"], "지속적인 폭언 등으로 더 이상 상담이 어렵습니다 통화를 종료하겠습니다"),
+    "sexual": (["end", "separate", "report", "legal"], "민원 상담 종료 폭언 성희롱 발생 시 민원 면담 종료 가능"),
+    "stalking": (["block"], "보호자 외부인의 특이민원에 대해서는 일시적 출입 면담 제한 예약 면담 학교관리자 면담"),
+    "doxxing": (["post_evidence", "letter", "legal"], "온라인 민원 경고공문 통지 법적조치 등을 취할 수 있다는 경고문구"),
 }
 
-# 같은 작성자에게 과거 악성(특이) 민원 이력이 있을 때의 재접촉 대응. 단계는 이력 건수(1건=1차, 2건 이상=2차).
-RECONTACT = {
-    1: ("과거 악성 민원 이력이 있는 민원인의 재접촉(1차): 진정된 경우 정상 응대하고, 폭언을 지속하면 통화 종료 후 관리자 보고",
-        "동일 민원인과 재통화 시 1차 민원인이 진정된 경우 정상 응대하고 폭언을 지속할 경우 통화 종료"),
-    2: ("과거 악성 민원 이력이 반복된 민원인의 재접촉(2차 이상): 상급자(교감 등)가 응대해 불만사항을 파악하고 경고한 뒤 종료",
-        "2차 상급자가 응대하고 경고 후 통화 종료 민원인의 불만사항 등을 파악하고 폭언 등에 대한 경고 조치"),
+# 같은 학생 민원에 과거 악성(특이) 이력이 있을 때의 재접촉 대응. 단계는 이력 건수(1건=1차, 2건 이상=2차).
+RECONTACT_ANCHOR = {
+    1: "동일 민원인과 재통화 시 1차 민원인이 진정된 경우 정상 응대하고 폭언을 지속할 경우 통화 종료",
+    2: "2차 상급자가 응대하고 경고 후 통화 종료 민원인의 불만사항 등을 파악하고 폭언 등에 대한 경고 조치",
 }
-CONTACT_LIMIT = ("악성 민원이 반복되어 업무를 방해하는 경우 출입·면담 제한 검토(예약 면담, 관리자 면담, 서면·온라인 창구 전환)",
-                 "흉기 소지 폭언 폭행 반복적 민원 제기 등으로 공무 업무를 방해한 자에 대한 출입 제한 퇴거 조치 가능")
+CONTACT_LIMIT_ANCHOR = "흉기 소지 폭언 폭행 반복적 민원 제기 등으로 공무 업무를 방해한 자에 대한 출입 제한 퇴거 조치 가능"
+
+
+def _add_step(steps, sid, reason, labels):
+    st = steps.setdefault(sid, {"reasons": [], "evidence": []})
+    if reason not in st["reasons"]:
+        st["reasons"].append(reason)
+    for lb in labels:
+        if lb not in st["evidence"]:
+            st["evidence"].append(lb)
+
 
 PII = [(re.compile(r"01[016789][-\s]?\d{3,4}[-\s]?\d{4}"), "[전화번호]"),
        (re.compile(r"\b\d{6}[-\s]?[1-4]\d{6}\b"), "[주민번호]"),
@@ -119,8 +146,8 @@ def _judge(llm, text, retr):
         return {}
 
 
-def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=None, save=True):
-    """complainant는 store.Author 또는 None. None이면 작성자 기준 이력 판단은 하지 않고 '작성자 미상'으로 저장한다.
+def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None, save=True):
+    """student는 store.Student(학생 이름 + 학년반) 또는 None. None이면 학생 기준 이력 판단은 하지 않고 '학생 미상'으로 저장한다.
     save=False면 DB에 저장하지 않는다(시험 입력). 이력 조회는 save와 상관없이 한다.
 
     이력 판단(매뉴얼 근거):
@@ -129,8 +156,8 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
       - 종결 민원 직후 재접촉 -> 거부 가능 (PDF 11쪽)
       - 과거 악성 이력이 있는 민원인의 재접촉 -> 1차·2차 대응 (PDF 49쪽), 반복 시 접촉 제한 검토 (PDF 26쪽)"""
     text = mask_pii(text)
-    history = store.find_history(complainant, text)
-    prior = history["same_author"]
+    history = store.find_history(student, text)
+    prior = history["same_student"]
     repeat = len(prior) + 1
     closed_before = any(p["closed"] for p in prior)
 
@@ -146,7 +173,7 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
     route = "ESCALATE" if escalate else "REJECTABLE" if rej else "HANDLE"
 
     col = _Collector(retr)
-    spans, hit_out, actions, notes = [], [], [], []
+    spans, hit_out, notes, steps = [], [], [], {}
 
     for r, sp, matched in (rej if route != "ESCALATE" else []):
         labels = col.add(r.anchor, "reject", f"거부·종결 가능 사유: {r.label}")
@@ -162,21 +189,23 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
                         "matched": matched, "confident": r.confident, "evidence": labels})
         spans += [(a, b, "malicious", labels[0] if labels else "") for a, b in sp]
         if r.key in ACTIONS:
-            act, anchor = ACTIONS[r.key]
-            actions.append({"text": act, "evidence": col.add(anchor, "procedure", f"현장 대응: {r.label}")})
+            ids, anchor = ACTIONS[r.key]
+            ev = col.add(anchor, "procedure", f"현장 대응: {r.label}")
+            for sid in ids:
+                _add_step(steps, sid, r.label, ev)
 
     pm = history["prior_malicious"]
     if pm:
         stage = min(pm, 2)
-        notes.append(f"같은 작성자의 과거 악성(특이) 의심 민원 {pm}건 이력 - 재접촉 {stage}차 대응 참고")
-        text_a, anchor_a = RECONTACT[stage]
-        actions.append({"text": text_a, "evidence": col.add(anchor_a, "procedure", f"과거 악성 이력 재접촉 {stage}차 대응")})
+        notes.append(f"같은 학생 민원에 과거 악성(특이) 의심 이력 {pm}건 - 재접촉 {stage}차 대응 참고")
+        _add_step(steps, f"recontact{stage}", "과거 악성 이력",
+                  col.add(RECONTACT_ANCHOR[stage], "procedure", f"과거 악성 이력 재접촉 {stage}차 대응"))
         if route == "ESCALATE":
-            text_l, anchor_l = CONTACT_LIMIT
-            actions.append({"text": text_l, "evidence": col.add(anchor_l, "procedure", "반복 악성 민원 접촉 제한 검토")})
+            _add_step(steps, "block", "악성 민원 반복", col.add(CONTACT_LIMIT_ANCHOR, "procedure", "반복 악성 민원 접촉 제한 검토"))
+    actions = [{"phase": STEPS[sid][0], "text": STEPS[sid][1], "reasons": steps[sid]["reasons"],
+                "evidence": steps[sid]["evidence"]} for sid in STEPS if sid in steps]
 
-    score, level = R.excitement(text, mal)
-    urg = R.urgency([h for h in mal if h[0].severity >= 3] if route == "ESCALATE" else [], level)
+    urg = R.urgency([h for h in mal if h[0].severity >= 3] if route == "ESCALATE" else [])
     dept, _ = R.department(text)
 
     if route == "REJECTABLE":
@@ -188,8 +217,6 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
         simple = dept == "기타" or not re.search(r"(확인|조사|사실관계|왜|이유)", text)
         handler = "민원대응팀" if simple else "담당(담임) 교사 협조 + 민원대응팀 총괄"
         deadline = "즉시" if simple else "7일 이내"
-        if level == "고위험":
-            handler, deadline = "학교장 총괄(관리자 면담)", "14일 이내(연장 가능)"
     else:
         handler, deadline = "관리자(교장·교감) 면담, 민원대응팀 공동 대응", "14일 이내(연장 가능)"
 
@@ -229,17 +256,16 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
 
     result = {
         "route": route, "route_label": ROUTE_LABEL[route], "repeat_count": repeat,
+        "student": student.display() if student else None,
         "reject": [h for h in hit_out if h["kind"] == "reject"],
         "malicious": [h for h in hit_out if h["kind"] == "malicious"],
-        "excitement": {"score": score, "level": level,
-                       "factors": [{"label": n, "count": c, "points": c * w}
-                                   for n, c, w in R.excitement_factors(text, mal) if c]}, "urgency": urg, "department": dept,
+        "urgency": urg, "department": dept,
         "handler": handler, "deadline": deadline, "notes": notes, "actions": actions,
         "criteria": criteria, "reply_draft": reply, "transfer_doc": transfer,
         "llm_judge": judge or None, "llm_used": llm.available,
         "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out),
         "text_masked": text,
-        "history": {"author": history["author"], "same_author": prior, "similar_others": history["similar_others"],
+        "history": {"student": history["student"], "same_student": prior, "similar_others": history["similar_others"],
                     "recent_closed": history["recent_closed"], "prior_malicious": pm},
         "complaint_id": None,
         "spans": [{"start": a, "end": b, "kind": k, "label": l} for a, b, k, l in sorted(spans)],
@@ -248,6 +274,6 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
                      for u in used],
     }
     if save:
-        result["complaint_id"] = store.save(result, complainant, received_at, call_minutes,
+        result["complaint_id"] = store.save(result, student, received_at, call_minutes,
                                             closed_by_repeat=any(r.key == "repeat" for r, _, _ in rej))
     return result, used

@@ -75,8 +75,6 @@ MALICIOUS = [
          "담당자에게 위법하거나 사회통념상 부당한 행위를 강요하는 행위", 2, False),
 ]
 
-EXCITED_WORDS = r"(어이없|황당|분통|당장|책임지|항의|화가|열받|최악|말이 ?돼|도대체|가만)"
-
 DEPT = {
     "교무/학사": r"(성적|수행평가|시험|학사일정|출결|결석|생활기록부|생기부|전학|졸업|증명서|시간표|교육과정|방학|조퇴|체험학습)",
     "생활지도/상담": r"(학폭|학교폭력|따돌|괴롭|싸움|친구|상담|생활지도|훈육|벌점|왕따|정서|아이가 ?(울|힘들))",
@@ -122,33 +120,11 @@ def detect_malicious(text, repeat_count=1):
     return hits
 
 
-EXCITE_CAUTION, EXCITE_HIGH = 25, 55     # 이 점수 이상이면 각각 '주의', '고위험'
-
-
-def excitement_factors(text, malicious_hits):
-    """흥분도 점수의 구성 요소: (이름, 개수, 개수당 점수). 개수는 느낌표 5개, 물음표 4개까지만 센다."""
-    return [
-        ("느낌표(!)", min(text.count("!"), 5), 8),
-        ("물음표(?)", min(text.count("?"), 4), 4),
-        ("격한 표현", len(re.findall(EXCITED_WORDS, text)), 10),
-        ("욕설·모욕·협박", sum(1 for r, _, _ in malicious_hits if r.key in ("abuse", "insult", "threat")), 25),
-        ("강한 표기(!!, ??, ;; 등)", len(re.findall(r"(ㅡㅡ|;;|!{2,}|\?{2,}|ㅠㅠ{2,})", text)), 10),
-    ]
-
-
-def excitement(text, malicious_hits):
-    score = min(100, sum(n * w for _, n, w in excitement_factors(text, malicious_hits)))
-    level = "고위험" if score >= EXCITE_HIGH else "주의" if score >= EXCITE_CAUTION else "낮음"
-    return score, level
-
-
-def urgency(malicious_hits, level):
+def urgency(malicious_hits):
+    """악성(특이) 유형의 가장 높은 심각도로 정한다: 5 -> 긴급, 3~4 -> 높음, 2 -> 보통, 그 외 낮음."""
     sev = max([r.severity for r, _, _ in malicious_hits], default=0)
     order = ["낮음", "보통", "높음", "긴급"]
-    base = 3 if sev >= 5 else 2 if sev >= 3 else 1 if sev >= 2 else 0
-    if level == "고위험":
-        base = min(3, base + 1)
-    return order[base]
+    return order[3 if sev >= 5 else 2 if sev >= 3 else 1 if sev >= 2 else 0]
 
 
 def department(text):
