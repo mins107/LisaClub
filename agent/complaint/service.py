@@ -11,6 +11,7 @@ from .llm import connect
 from .manual_index import build_index
 from .pipeline import run
 from .retriever import Retriever
+from .schedule import SchoolCalendar
 from .settings import load_settings
 from .store import Store, make_student
 
@@ -26,6 +27,7 @@ class ComplaintService:
         embed = self.llm.embed if (self.llm.available and s.embed_model) else None
         self.retr = Retriever(self.index, embed)
         self.store = Store(db or s.database_url, s.history_window_days, s.recontact_hours)
+        self.calendar = SchoolCalendar.from_settings(s)
         self._lock = threading.Lock()      # sqlite 이력 갱신을 요청 간에 직렬화
 
     def classify(self, text, student=None, class_no=None, received_at=None, call_minutes=None, save=True):
@@ -35,7 +37,8 @@ class ComplaintService:
         stu = make_student(student, class_no)
         with self._lock:
             return run(text, stu, self.retr, self.store, self.llm,
-                       received_at=received_at or None, call_minutes=call_minutes, save=save)
+                       received_at=received_at or None, call_minutes=call_minutes, save=save,
+                       calendar=self.calendar)
 
     def save_outputs(self, result, used, out_dir):
         """근거 형광펜 PDF, result.json, report.html을 out_dir에 쓴다."""

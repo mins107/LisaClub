@@ -5,9 +5,10 @@
 이 두 메서드를 같은 형태로 구현하면 된다. SQL DB(PostgreSQL·MySQL 등)는 DATABASE_URL만 바꾸면 된다.
 
 테이블
-  students        민원 대상 학생(이름 + 학년반)
-  complaints      처리한 민원 1건 = 1행. 접수 정보 + 분류 결과 + 전체 결과(result_json)
-  complaint_hits  민원별로 걸린 거부·악성 규칙
+  students          민원 대상 학생(이름 + 학년반)
+  complaints        처리한 민원 1건 = 1행. 접수 정보 + 분류 결과 + 전체 결과(result_json) + 처리 상태·담임 전달 상태
+  complaint_hits    민원별로 걸린 거부·악성 규칙
+  complaint_events  민원별 처리 경과(접수, 상태 변경, 메모, 담임 전달)
 
 이력 판단 기준(매뉴얼 근거는 pipeline.py·rules.py 참고)
   동일·유사 반복      같은 학생의 과거 민원 중 내용이 비슷한 것(window_days 이내)
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer, MetaData, String, Table, Text,
-                        UniqueConstraint, create_engine, func, inspect, select, text)
+                        UniqueConstraint, create_engine, false, func, inspect, or_, select, text)
 from sqlalchemy.pool import StaticPool
 
 from .retriever import tokenize
@@ -30,6 +31,10 @@ from .retriever import tokenize
 SAME_STUDENT_SIM = 0.3    # 같은 학생의 과거 민원이 "동일·유사"로 보이는 기준(자카드 유사도)
 OTHER_STUDENT_SIM = 0.5   # 다른 학생의 민원은 더 비슷할 때만 참고용으로 보여 준다
 SCAN_LIMIT = 500          # 내용 비교는 기간 안의 최근 N건만 (학교 규모에서는 충분)
+
+STATUSES = ["접수", "처리 중", "완료", "이첩"]      # 처리 상태. 완료·이첩은 처리가 끝난 상태
+OPEN_STATUSES = ["접수", "처리 중"]
+EVENT_KINDS = ["접수", "상태", "메모", "담임전달"]
 
 meta = MetaData()
 
@@ -61,6 +66,11 @@ complaints = Table(
     Column("llm_used", Boolean, nullable=False),
     Column("result_json", Text, nullable=False),           # 분류 결과 전체(근거·초안 포함)
     Column("created_at", DateTime, nullable=False, index=True),
+    Column("status", String(10), nullable=False, server_default="접수", index=True),   # STATUSES
+    Column("completed_at", DateTime),                      # 완료·이첩 처리한 시각
+    Column("updated_at", DateTime),                        # 마지막으로 처리 경과가 바뀐 시각
+    Column("homeroom_needed", Boolean, nullable=False, server_default=false()),   # 담임 교사 전달이 필요한 민원
+    Column("homeroom_sent_at", DateTime),                  # 담임 교사에게 전달했다고 표시한 시각
 )
 
 complaint_hits = Table(
@@ -71,6 +81,17 @@ complaint_hits = Table(
     Column("rule_key", String(30), nullable=False),
     Column("label", String(100), nullable=False),
     Column("severity", Integer),
+)
+
+complaint_events = Table(
+    "complaint_events", meta,
+    Column("id", Integer, primary_key=True),
+    Column("complaint_id", Integer, ForeignKey("complaints.id"), nullable=False, index=True),
+    Column("created_at", DateTime, nullable=False),
+    Column("kind", String(12), nullable=False),            # EVENT_KINDS
+    Column("status", String(10)),                          # 상태 변경이면 바뀐 상태
+    Column("note", Text),
+    Column("actor", String(50)),                           # 처리자(선택 입력)
 )
 
 
@@ -105,6 +126,34 @@ def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _local(dt):
+    """DB에는 UTC로 저장하므로, 화면에는 이 컴퓨터의 현지 시각으로 바꿔 보여 준다."""
+    return dt.replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M") if dt else None
+
+
+def due_days(deadline):
+    """처리 기한 문구에서 일 수를 뽑는다. '7일 이내' -> 7, '즉시…' -> 1(당일~익일로 본다, 임의 기준), 그 외 None."""
+    m = re.search(r"(\d+)\s*일", deadline or "")
+    if m:
+        return int(m.group(1))
+    return 1 if "즉시" in (deadline or "") else None
+
+
+def _due_info(created, deadline, status, completed, now):
+    """(표시 문구, 기한 초과 여부). 진행 중이면 남은 기한, 끝났으면 걸린 기간."""
+    if status in ("완료", "이첩"):
+        end = completed or created
+        d = (end - created).days
+        return ("당일 처리" if d <= 0 else f"{d}일 소요"), False
+    n = due_days(deadline)
+    if n is None:
+        return "", False
+    left = created + timedelta(days=n) - now
+    if left.total_seconds() >= 0:
+        return ("오늘 마감" if left.days == 0 else f"D-{left.days}"), False
+    return f"초과 {-(-int(-left.total_seconds()) // 86400)}일", True
+
+
 def _url(target: str) -> str:
     if target == ":memory:":
         return "sqlite://"
@@ -135,6 +184,18 @@ class Store:
         self.window_days, self.recontact_hours = window_days, recontact_hours
         self._migrate_old_schema(url)
         meta.create_all(self.engine)       # 테이블이 없을 때만 만든다
+        self._add_missing_columns()
+
+    def _add_missing_columns(self):
+        """이전 버전의 complaints 테이블에 처리 상태 관련 컬럼이 없으면 덧붙인다(데이터는 그대로 유지)."""
+        have = {c["name"] for c in inspect(self.engine).get_columns("complaints")}
+        not_null = {"status": "NOT NULL DEFAULT '접수'", "homeroom_needed": "NOT NULL DEFAULT FALSE"}
+        with self.engine.begin() as c:
+            for col in complaints.c:
+                if col.name not in have:
+                    c.execute(text(f"ALTER TABLE complaints ADD COLUMN {col.name} "
+                                   f"{col.type.compile(dialect=self.engine.dialect)} {not_null.get(col.name, '')}"))
+            c.execute(text("UPDATE complaints SET updated_at = created_at WHERE updated_at IS NULL"))
 
     def _migrate_old_schema(self, url):
         """이전 구조(작성자 테이블 complainants, 흥분도 컬럼)를 만나면 새 구조로 바꾼다.
@@ -191,13 +252,13 @@ class Store:
                 esc = c.execute(select(func.count()).where(complaints.c.student_id == student_id,
                                                            complaints.c.route == "ESCALATE")).scalar()
                 summary = {"name": student.name, "class_no": student.class_no, "total": total, "escalated": esc,
-                           "last_at": last.isoformat(timespec="minutes") if last else None}
+                           "last_at": _local(last)}
         same, others, recent_closed, malicious = [], [], None, 0
         recontact_from = now - timedelta(hours=self.recontact_hours)
         for r in rows:
             sim = _jaccard(r["text_masked"], text_)
             closed = r["route"] == "REJECTABLE" or bool(r["closed_by_repeat"])
-            item = {"id": r["id"], "created_at": r["created_at"].isoformat(timespec="minutes"),
+            item = {"id": r["id"], "created_at": _local(r["created_at"]),
                     "student": f"{r['s_name']}({r['s_class']})" if r["s_name"] else None,
                     "route": r["route"], "similarity": round(sim, 2), "snippet": _snippet(r["text_masked"]),
                     "closed": closed}
@@ -231,10 +292,143 @@ class Store:
                 route=result["route"], route_label=result["route_label"], urgency=result["urgency"],
                 department=result["department"], handler=result["handler"], deadline=result["deadline"],
                 repeat_count=result["repeat_count"], closed_by_repeat=closed_by_repeat,
+                status="접수", updated_at=now, homeroom_needed=bool(result.get("homeroom")),
                 needs_human_review=result["needs_human_review"], llm_used=result["llm_used"],
                 result_json=json.dumps(result, ensure_ascii=False), created_at=now)).inserted_primary_key[0]
             hits = [{"complaint_id": cid, "kind": h["kind"], "rule_key": h["key"], "label": h["label"],
                      "severity": h.get("severity")} for h in result["reject"] + result["malicious"]]
             if hits:
                 c.execute(complaint_hits.insert(), hits)
+            c.execute(complaint_events.insert().values(
+                complaint_id=cid, created_at=now, kind="접수", status="접수", note=f"자동 분류: {result['route_label']}"))
         return cid
+
+    # ---- 처리 경과·대시보드 ----
+
+    def get_complaint(self, cid):
+        """민원 1건의 상세. 없으면 None. result는 저장해 둔 분류 결과(dict), events는 처리 경과(오래된 순)."""
+        with self.engine.connect() as c:
+            r = c.execute(
+                select(complaints, students.c.name.label("s_name"), students.c.class_no.label("s_class"))
+                .select_from(complaints.outerjoin(students, complaints.c.student_id == students.c.id))
+                .where(complaints.c.id == cid)).mappings().first()
+            if not r:
+                return None
+            evs = c.execute(select(complaint_events).where(complaint_events.c.complaint_id == cid)
+                            .order_by(complaint_events.c.id)).mappings().all()
+        result = json.loads(r["result_json"])
+        result["complaint_id"] = r["id"]
+        events = [{"created_at": _local(e["created_at"]), "kind": e["kind"], "status": e["status"],
+                   "note": e["note"], "actor": e["actor"]} for e in evs]
+        if not events:      # 처리 경과 기능이 생기기 전에 저장된 민원
+            events = [{"created_at": _local(r["created_at"]), "kind": "접수", "status": "접수", "note": None, "actor": None}]
+        now = _now()
+        due, overdue = _due_info(r["created_at"], r["deadline"], r["status"], r["completed_at"], now)
+        return {"id": r["id"], "student": f"{r['s_name']}({r['s_class']})" if r["s_name"] else None,
+                "created_at": _local(r["created_at"]), "updated_at": _local(r["updated_at"]),
+                "completed_at": _local(r["completed_at"]), "status": r["status"], "route": r["route"],
+                "route_label": r["route_label"], "urgency": r["urgency"], "department": r["department"],
+                "handler": r["handler"], "deadline": r["deadline"], "due": due, "overdue": overdue,
+                "homeroom_needed": bool(r["homeroom_needed"]), "homeroom_sent_at": _local(r["homeroom_sent_at"]),
+                "needs_human_review": bool(r["needs_human_review"]), "result": result, "events": events}
+
+    def add_event(self, cid, kind, note=None, status=None, actor=None):
+        with self.engine.begin() as c:
+            self._event(c, cid, kind, note, status, actor, _now())
+
+    def _event(self, c, cid, kind, note, status, actor, now):
+        c.execute(complaint_events.insert().values(
+            complaint_id=cid, created_at=now, kind=kind, status=status, actor=(actor or "").strip()[:50] or None,
+            note=(note or "").strip()[:1000] or None))
+        c.execute(complaints.update().where(complaints.c.id == cid).values(updated_at=now))
+
+    def set_status(self, cid, status, note=None, actor=None):
+        """처리 상태를 바꾸고 경과에 남긴다. 완료·이첩이면 처리 완료 시각을 기록하고, 다시 열면 지운다."""
+        if status not in STATUSES:
+            raise ValueError("처리 상태는 " + ", ".join(STATUSES) + " 중 하나여야 합니다.")
+        now = _now()
+        with self.engine.begin() as c:
+            old = c.execute(select(complaints.c.status).where(complaints.c.id == cid)).scalar()
+            if old is None:
+                raise KeyError(cid)
+            c.execute(complaints.update().where(complaints.c.id == cid).values(
+                status=status, completed_at=now if status in ("완료", "이첩") else None))
+            label = f"{old} → {status}" + (f" — {note.strip()}" if (note or "").strip() else "")
+            self._event(c, cid, "상태", label, status, actor, now)
+
+    def mark_homeroom_sent(self, cid, note=None, actor=None):
+        """담임 교사에게 전달했다고 표시한다. 아직 '접수'면 '처리 중'으로 바꾼다."""
+        now = _now()
+        with self.engine.begin() as c:
+            row = c.execute(select(complaints.c.status, complaints.c.homeroom_needed)
+                            .where(complaints.c.id == cid)).first()
+            if row is None:
+                raise KeyError(cid)
+            c.execute(complaints.update().where(complaints.c.id == cid).values(homeroom_sent_at=now))
+            self._event(c, cid, "담임전달", note or "담임 교사에게 전달함", None, actor, now)
+            if row.status == "접수":
+                c.execute(complaints.update().where(complaints.c.id == cid).values(status="처리 중", completed_at=None))
+                self._event(c, cid, "상태", "접수 → 처리 중 — 담임 교사 전달 후 자동 변경", "처리 중", actor, now)
+
+    def list_complaints(self, status=None, route=None, department=None, urgency=None, homeroom=None,
+                        overdue=False, q=None, page=1, per_page=20, now=None):
+        """대시보드 목록. 최신 순. status는 STATUSES 또는 'open'(접수+처리 중), homeroom은 'pending'|'sent'.
+        반환: (이번 쪽 행 목록, 조건에 맞는 전체 건수)"""
+        now = now or _now()
+        cond = []
+        if status == "open":
+            cond.append(complaints.c.status.in_(OPEN_STATUSES))
+        elif status in STATUSES:
+            cond.append(complaints.c.status == status)
+        for col, v in ((complaints.c.route, route), (complaints.c.department, department), (complaints.c.urgency, urgency)):
+            if v:
+                cond.append(col == v)
+        if homeroom == "pending":
+            cond += [complaints.c.homeroom_needed.is_(True), complaints.c.homeroom_sent_at.is_(None)]
+        elif homeroom == "sent":
+            cond.append(complaints.c.homeroom_sent_at.is_not(None))
+        if q and q.strip():
+            like = "%" + q.strip().replace("%", "").replace("_", "") + "%"
+            cond.append(or_(complaints.c.text_masked.ilike(like), students.c.name.ilike(like)))
+        with self.engine.connect() as c:
+            rows = c.execute(
+                select(complaints, students.c.name.label("s_name"), students.c.class_no.label("s_class"))
+                .select_from(complaints.outerjoin(students, complaints.c.student_id == students.c.id))
+                .where(*cond).order_by(complaints.c.id.desc()).limit(5000)).mappings().all()
+        out = []
+        for r in rows:
+            due, over = _due_info(r["created_at"], r["deadline"], r["status"], r["completed_at"], now)
+            if overdue and not (over and r["status"] in OPEN_STATUSES):
+                continue
+            out.append({"id": r["id"], "created_at": _local(r["created_at"]), "updated_at": _local(r["updated_at"]),
+                        "student": f"{r['s_name']}({r['s_class']})" if r["s_name"] else None,
+                        "text": _snippet(r["text_masked"], 70), "route": r["route"], "urgency": r["urgency"],
+                        "department": r["department"], "handler": r["handler"], "deadline": r["deadline"],
+                        "status": r["status"], "due": due, "overdue": over,
+                        "homeroom_needed": bool(r["homeroom_needed"]), "homeroom_sent_at": _local(r["homeroom_sent_at"]),
+                        "needs_human_review": bool(r["needs_human_review"])})
+        start = (max(page, 1) - 1) * per_page
+        return out[start:start + per_page], len(out)
+
+    def stats(self, days=14, now=None):
+        """대시보드 요약 숫자와 그래프용 집계."""
+        now = now or _now()
+        with self.engine.connect() as c:
+            rows = c.execute(select(complaints.c.created_at, complaints.c.route, complaints.c.department,
+                                    complaints.c.status, complaints.c.deadline, complaints.c.completed_at,
+                                    complaints.c.homeroom_needed, complaints.c.homeroom_sent_at)).all()
+        count = lambda key: {k: sum(1 for r in rows if getattr(r, key) == k) for k in sorted({getattr(r, key) for r in rows})}  # noqa: E731
+        today = now.replace(tzinfo=timezone.utc).astimezone().date()
+        daily = {today - timedelta(days=i): 0 for i in range(days - 1, -1, -1)}
+        overdue = 0
+        for r in rows:
+            d = r.created_at.replace(tzinfo=timezone.utc).astimezone().date()
+            if d in daily:
+                daily[d] += 1
+            if r.status in OPEN_STATUSES and _due_info(r.created_at, r.deadline, r.status, r.completed_at, now)[1]:
+                overdue += 1
+        by_status = {k: count("status").get(k, 0) for k in STATUSES}
+        return {"total": len(rows), "by_status": by_status, "open": by_status["접수"] + by_status["처리 중"],
+                "overdue": overdue, "by_route": count("route"), "by_department": count("department"),
+                "homeroom_pending": sum(1 for r in rows if r.homeroom_needed and not r.homeroom_sent_at),
+                "daily": [(d.strftime("%m-%d"), n) for d, n in daily.items()]}

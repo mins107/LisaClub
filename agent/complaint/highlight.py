@@ -108,6 +108,9 @@ font:inherit;font-size:.88em;font-weight:700;cursor:pointer} .ev-tab b{margin-le
 .ev-label{font-weight:800;background:var(--r);color:#111;border-radius:6px;padding:0 7px}
 .ev .role{font-weight:800} .ev .why2{margin:6px 0 4px;font-size:.84em;color:var(--muted)}
 .ev blockquote{margin:6px 0 2px;padding:6px 10px;background:var(--card);border-radius:6px;font-size:.9em}
+/* 담임 교사 전달 */
+.homeroom{border-left:6px solid var(--blue)} .hr-sum{margin:0 0 10px} .hr-act{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:10px}
+.hr-msg{margin-top:10px;padding:10px 12px;border:1px dashed var(--border);border-radius:8px;background:var(--soft);font-size:.9em}
 /* 공통 부품 */
 details.drawer{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 18px;margin-bottom:14px}
 details.drawer>summary{cursor:pointer;font-weight:700} .drawer-body{margin-top:10px}
@@ -167,8 +170,8 @@ def _todo(result):
             phases.append((a["phase"], []))
         phases[-1][1].append(a)
     if not phases:
-        return (f'<p style="margin:0">특별한 현장 조치는 없습니다. <b>{html.escape(result["handler"])}</b>이(가) '
-                f'<b>{html.escape(result["deadline"])}</b>에 일반 절차로 처리하세요.</p>')
+        return (f'<p style="margin:0">특별한 현장 조치는 없습니다. 담당·기한에 따라 일반 절차로 처리하세요 '
+                f'(담당: <b>{html.escape(result["handler"])}</b> · 기한: <b>{html.escape(result["deadline"])}</b>).</p>')
     out = []
     for n, (name, items) in enumerate(phases, 1):
         steps = "".join(
@@ -177,6 +180,15 @@ def _todo(result):
             for a in items)
         out.append(f'<li class="phase"><div class="phase-name"><i>{n}</i>{html.escape(name)}</div><ul class="steps">{steps}</ul></li>')
     return f'<ol class="phases">{"".join(out)}</ol>'
+
+
+def _schedule_note(sc):
+    """학사일정 문의 안내 한 줄. 일정 API로 만든 초안인지, 왜 못 만들었는지 알려 준다."""
+    if not sc:
+        return ""
+    ok = sc["status"] == "ok"
+    head = "학사일정 API로 만든 답변 초안입니다. 보내기 전에 일정을 한 번 확인하세요." if ok else "학사일정 문의로 보이지만 일정 답변은 만들지 못했습니다."
+    return (f'<p class="foot" style="margin:0 0 8px"><b>{head}</b> {html.escape(sc.get("message") or "")}</p>')
 
 
 def _history_box(result):
@@ -228,7 +240,20 @@ def _evidence(result, pdf_href):
     return f'<h3>매뉴얼 근거 ({n})</h3>{pdf}{tabs}{"".join(secs)}' if n else '<h3>매뉴얼 근거</h3><p class="muted">검색된 근거가 없습니다.</p>'
 
 
-def render_body(result, pdf_href=None):
+def _homeroom_box(result, footer=""):
+    """담당에 담임 교사가 들어가는 민원: 담임 교사에게 전달할 요약과 필요한 행동, 복사용 전달문."""
+    h = result.get("homeroom")
+    if not h:
+        return ""
+    acts = "".join(f'<li>{html.escape(a["text"])}{_tags(a.get("evidence"))}</li>' for a in h["actions"])
+    return (f'<div class="box homeroom"><h2>담임 교사 전달 <small>({html.escape(h["to"])} · {html.escape(h["student"])})</small></h2>'
+            f'<p class="hr-sum"><b>민원 요약</b> {html.escape(h["summary"])}</p>'
+            f'<div class="sec-title">필요한 행동</div><ol class="todo" style="margin:0 0 4px;padding-left:22px">{acts}</ol>'
+            f'<div class="hr-act"><button type="button" class="btn" data-copy="hr-msg">전달문 복사</button>{footer}</div>'
+            f'<pre class="hr-msg" id="hr-msg">{html.escape(h["message"])}</pre></div>')
+
+
+def render_body(result, pdf_href=None, homeroom_footer=""):
     """분류 결과 화면: 요약 -> 지금 할 일 -> (원문·사유·이력·초안 | 매뉴얼 근거). 웹 페이지와 report.html이 함께 쓴다."""
     route, color = result["route"], ROUTE_COLOR[result["route"]]
     urg = result["urgency"]
@@ -252,6 +277,7 @@ def render_body(result, pdf_href=None):
 <span class="sum-label">{html.escape(result['route_label'])}</span></div>{review}
 <dl class="tiles" style="margin-bottom:0">{dl}</dl></section>
 <div class="box"><h2>지금 할 일 <small>(해 둔 항목은 체크하세요)</small></h2>{_todo(result)}</div>
+{_homeroom_box(result, homeroom_footer)}
 <div class="cols"><div class="col">
 <div class="box"><h3>민원 원문 <small>(개인정보 마스킹)</small></h3><pre class="orig">{_marked_text(result)}</pre>
 <div class="legend" style="margin-top:10px">{legend}</div></div>
@@ -261,7 +287,7 @@ def render_body(result, pdf_href=None):
 {f'<div class="rrow"><div class="sec-title">참고 (맥락 확인 필요)</div>{notes}</div>' if notes else ''}
 <div class="foot">칩에 마우스를 올리면 감지된 표현이 보이고, E1·E2 같은 번호를 누르면 오른쪽 매뉴얼 근거로 이동합니다.</div></div>
 {_history_box(result)}
-<details class="drawer"><summary>답변·경고 초안</summary><div class="drawer-body">{copy("reply-text")}
+<details class="drawer"{' open' if (result.get('schedule') or {}).get('status') == 'ok' else ''}><summary>답변·경고 초안</summary><div class="drawer-body">{_schedule_note(result.get('schedule'))}{copy("reply-text")}
 <pre id="reply-text" style="margin-top:8px">{html.escape(result['reply_draft'])}</pre></div></details>
 {transfer}
 <p class="foot">※ 자동 판정은 후보 제시용이며 최종 판단은 학교장(민원대응팀)이 한다.</p></div>

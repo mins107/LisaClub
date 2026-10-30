@@ -246,6 +246,143 @@ def test_history_rules_from_manual():
     assert res["history"]["prior_malicious"] == 2 and any("재접촉 2차 이상" in x["text"] for x in res["actions"])
 
 
+def _handoff_result(text="숙제 문의 확인해 주세요"):
+    return {**_fake_result(text), "handler": "담당(담임) 교사 협조 + 민원대응팀 총괄", "deadline": "7일 이내",
+            "homeroom": {"to": "3학년 5반 담임 교사"}}
+
+
+def test_store_progress_lifecycle():
+    from datetime import timedelta
+    from agent.complaint import store as st
+    s = Store()
+    cid = s.save(_handoff_result(), make_student("홍길동", "305"))
+    c = s.get_complaint(cid)
+    assert c["status"] == "접수" and c["homeroom_needed"] and not c["homeroom_sent_at"]
+    assert [e["kind"] for e in c["events"]] == ["접수"]
+    stats = s.stats()
+    assert stats["total"] == 1 and stats["open"] == 1 and stats["homeroom_pending"] == 1 and stats["by_status"]["접수"] == 1
+
+    s.mark_homeroom_sent(cid, "메신저로 전달", "김교사")                  # 전달하면 접수 -> 처리 중으로 바뀐다
+    c = s.get_complaint(cid)
+    assert c["status"] == "처리 중" and c["homeroom_sent_at"] and s.stats()["homeroom_pending"] == 0
+    assert [e["kind"] for e in c["events"]] == ["접수", "담임전달", "상태"]
+
+    s.set_status(cid, "완료", "회신함", "김교사")
+    c = s.get_complaint(cid)
+    assert c["status"] == "완료" and c["completed_at"] and "처리 중 → 완료" in c["events"][-1]["note"]
+    assert c["events"][-1]["actor"] == "김교사" and s.stats()["open"] == 0
+    s.set_status(cid, "처리 중")                                           # 다시 열면 완료 시각이 지워진다
+    assert s.get_complaint(cid)["completed_at"] is None
+    s.add_event(cid, "메모", "학부모 재문의 예정")
+    assert s.get_complaint(cid)["events"][-1]["kind"] == "메모"
+    with pytest.raises(ValueError):
+        s.set_status(cid, "없는상태")
+    with pytest.raises(KeyError):
+        s.set_status(9999, "완료")
+
+    assert s.list_complaints(status="open")[1] == 1 and s.list_complaints(status="완료")[1] == 0
+    assert s.list_complaints(q="홍길")[1] == 1 and s.list_complaints(q="없는말")[1] == 0
+    assert s.list_complaints(homeroom="sent")[1] == 1 and s.list_complaints(homeroom="pending")[1] == 0
+    later = st._now() + timedelta(days=8)                                  # 기한 7일을 넘기면 초과로 센다
+    assert s.list_complaints(overdue=True)[1] == 0
+    rows, total = s.list_complaints(overdue=True, now=later)
+    assert total == 1 and rows[0]["overdue"] and rows[0]["due"].startswith("초과")
+    assert s.stats(now=later)["overdue"] == 1
+
+
+def test_store_adds_progress_columns_to_existing_db(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "prev.sqlite")
+    Store(path).save(_fake_result("이전에 저장된 민원"), make_student("홍길동", "305"))
+    c = sqlite3.connect(path)                                              # 처리 경과 기능이 생기기 전의 DB를 흉내 낸다
+    c.execute("DROP INDEX ix_complaints_status")
+    for col in ("status", "completed_at", "updated_at", "homeroom_needed", "homeroom_sent_at"):
+        c.execute(f"ALTER TABLE complaints DROP COLUMN {col}")
+    c.execute("DROP TABLE complaint_events")
+    c.commit()
+    c.close()
+    s = Store(path)                                                        # 컬럼이 덧붙고 기존 민원은 그대로
+    rows, total = s.list_complaints()
+    assert total == 1 and rows[0]["status"] == "접수" and rows[0]["updated_at"]
+    c = s.get_complaint(1)
+    assert c["status"] == "접수" and [e["kind"] for e in c["events"]] == ["접수"]      # 경과가 없던 민원은 접수 한 줄
+    s.set_status(1, "처리 중")
+    assert s.get_complaint(1)["status"] == "처리 중"
+
+
+@needs_pdf
+def test_homeroom_handoff_only_when_teacher_involved():
+    idx = build_index(PDF)
+    retr, store, llm = Retriever(idx), Store(), NullLLM()
+    text = "수행평가 점수가 이해되지 않습니다. 채점 기준을 확인하고 싶습니다. 왜 이 점수인지 이유를 알려 주세요."
+    res, _ = run(text, make_student("홍길동", "305"), retr, store, llm, save=False)
+    h = res["homeroom"]
+    assert "담임" in res["handler"] and h["to"] == "3학년 5반 담임 교사" and h["student"] == "홍길동(305)"
+    assert h["summary"] and len(h["actions"]) == 3 and h["actions"][0]["evidence"] and h["actions"][1]["evidence"]
+    assert "성적" in h["actions"][0]["text"] and "7일 이내" in h["actions"][1]["text"]      # 교무/학사 -> 성적·출결 확인
+    assert "■ 민원 요약" in h["message"] and "■ 요청 사항" in h["message"] and "홍길동(305)" in h["message"]
+    res, _ = run(text, None, retr, store, llm, save=False)
+    assert "미입력" in res["homeroom"]["to"]
+    for other in ("체험학습 일정이 궁금합니다", "칼 들고 찾아가서 가만 안 둔다", "카톡으로 개인 번호 알려주세요"):
+        res, _ = run(other, None, retr, store, llm, save=False)
+        assert res["homeroom"] is None                                   # 담임이 담당에 없으면 만들지 않는다
+
+
+@needs_pdf
+def test_web_dashboard_and_progress(tmp_path):
+    import threading
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from agent.complaint import web
+    from agent.complaint.service import ComplaintService
+
+    web.Handler.service = ComplaintService(PDF, ":memory:", "none")
+    web.Handler.out_root = str(tmp_path)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    get = lambda p: urllib.request.urlopen(base + p).read().decode()  # noqa: E731
+    post = lambda p, d: urllib.request.urlopen(base + p, urllib.parse.urlencode(d).encode()).read().decode()  # noqa: E731
+    try:
+        main = get("/")                                                    # 메인 화면: 대시보드 + 새 민원 입력
+        assert "전체 민원" in main and "민원 목록" in main and "＋ 새 민원 입력" in main and "분류하기" in main
+        assert "조건에 맞는 민원이 없습니다" in main
+
+        text = "수행평가 점수가 이해되지 않습니다. 채점 기준을 확인하고 싶습니다. 왜 이 점수인지 이유를 알려 주세요."
+        page = post("/classify", {"text": text, "student": "홍길동", "class_no": "305"})     # 저장 후 상세 화면으로 이동
+        assert "민원 #1" in page and "분류가 끝나 DB에 저장되었습니다" in page and "처리 경과" in page
+        assert "담임 교사 전달" in page and "전달함으로 표시" in page and "3학년 5반 담임 교사" in page
+        assert "evidence_highlighted.pdf" in page
+
+        main = get("/")
+        assert 'href="/complaints/1"' in main and "홍길동(305)" in main and "전달 대기" in main
+        assert 'href="/complaints/1"' in get("/?status=open") and "조건에 맞는 민원이 없습니다" in get("/?status=" + urllib.parse.quote("완료"))
+        assert 'href="/complaints/1"' in get("/?homeroom=pending") and 'href="/complaints/1"' in get("/?q=" + urllib.parse.quote("홍길"))
+
+        page = post("/complaints/1/homeroom", {"note": "메신저로 전달", "actor": "김교사"})
+        assert "전달 완료" in page and "메신저로 전달" in page and "접수 → 처리 중" in page
+        page = post("/complaints/1/record", {"status": "완료", "note": "학부모에게 설명함", "actor": "김교사"})
+        assert "처리 중 → 완료" in page and "학부모에게 설명함" in page and "처리 완료" in page
+        page = post("/complaints/1/record", {"status": "", "note": "추가 문의 없음"})
+        assert "추가 문의 없음" in page
+        assert 'href="/complaints/1"' in get("/?status=" + urllib.parse.quote("완료")) and "전달 완료" in get("/")
+        for bad in ({"status": "", "note": ""}, {"status": "없는상태", "note": "x"}):
+            with pytest.raises(urllib.error.HTTPError) as e:
+                post("/complaints/1/record", bad)
+            assert e.value.code == 400
+        for missing in ("/complaints/999", "/cases/complaint-1/../../x"):
+            with pytest.raises(urllib.error.HTTPError) as e:
+                get(missing)
+            assert e.value.code == 404
+        post("/classify", {"text": "체험학습 일정이 궁금합니다", "nosave": "1"})              # 시험 입력은 목록에 안 나온다
+        assert 'href="/complaints/2"' not in get("/")
+    finally:
+        srv.shutdown()
+
+
 @needs_pdf
 def test_repeat_closed_then_escalate():
     idx = build_index(PDF)
@@ -253,3 +390,70 @@ def test_repeat_closed_then_escalate():
     t = "수행평가 점수 채점 기준을 알려 주세요"
     routes = [run(t, make_student("사아", "109"), retr, store, llm)[0]["route"] for _ in range(5)]
     assert routes[:2] == ["HANDLE", "HANDLE"] and routes[2] == "REJECTABLE" and routes[4] == "ESCALATE"
+
+
+class FakeCalendar:
+    configured = True
+
+    def __init__(self, rows):
+        self.rows, self.asked = rows, None
+
+    def fetch(self, start, end):
+        self.asked = (start, end)
+        return self.rows
+
+
+def _ev(ymd, name, **kw):
+    return {"AA_YMD": ymd, "EVENT_NM": name, "EVENT_CNTNT": "", "SBTR_DD_SC_NM": "해당없음",
+            "ONE_GRADE_EVENT_YN": "Y", "TW_GRADE_EVENT_YN": "Y", "THREE_GRADE_EVENT_YN": "Y", **kw}
+
+
+def test_schedule_inquiry_detection_and_range():
+    from datetime import date
+    from agent.complaint import schedule as SC
+    assert SC.is_schedule_inquiry("다음 주 현장체험학습 일정이 어떻게 되는지 궁금합니다")
+    assert SC.is_schedule_inquiry("기말고사는 언제인가요?")
+    assert not SC.is_schedule_inquiry("수행평가 점수가 이해되지 않습니다. 이유를 알려 주세요")
+    assert not SC.is_schedule_inquiry("체험학습 때문에 화가 납니다")        # 질문 표현이 없으면 아님
+    today = date(2026, 10, 30)                                               # 금요일
+    assert SC.date_range("다음 주 체험학습", today)[:2] == (date(2026, 11, 2), date(2026, 11, 8))
+    assert SC.date_range("12월 방학식 언제", today)[:2] == (date(2026, 12, 1), date(2026, 12, 31))
+    assert SC.date_range("1월 5일 개학", today)[:2] == (date(2027, 1, 5), date(2027, 1, 5))
+
+
+def test_schedule_answer_statuses_and_grade_filter():
+    from agent.complaint import schedule as SC
+    rows = [_ev("20261104", "현장체험학습", THREE_GRADE_EVENT_YN="N"), _ev("20261105", "현장체험학습", THREE_GRADE_EVENT_YN="N"),
+            _ev("20261106", "현장체험학습", ONE_GRADE_EVENT_YN="N", TW_GRADE_EVENT_YN="N", THREE_GRADE_EVENT_YN="Y"),
+            _ev("20261107", "개교기념일")]
+    cal = FakeCalendar(rows)
+    r = SC.answer("체험학습 일정이 언제인가요?", make_student("홍길동", "105"), cal)
+    assert r["status"] == "ok" and len(r["events"]) == 1                      # 1학년 행사만, 연속 날짜는 기간 하나로
+    assert r["events"][0]["start"] == "20261104" and r["events"][0]["end"] == "20261105"
+    assert "11월 4일" in r["reply"] and "~" in r["reply"] and "11월 6일" not in r["reply"] and "출처" in r["reply"]
+    assert SC.answer("체험학습 일정이 언제인가요?", make_student("김", "305"), cal)["events"][0]["start"] == "20261106"
+    assert SC.answer("수학여행 언제인가요?", None, cal)["status"] == "no_match"
+    assert SC.answer("체험학습 일정이 언제인가요?", None, SC.SchoolCalendar())["status"] == "not_configured"
+    assert SC.answer("점수를 알려 주세요", None, cal) is None
+    assert SC._rows({"RESULT": {"CODE": "INFO-200", "MESSAGE": "없음"}}) == []
+    with pytest.raises(RuntimeError):
+        SC._rows({"RESULT": {"CODE": "INFO-300", "MESSAGE": "키 오류"}})
+
+
+@needs_pdf
+def test_pipeline_uses_schedule_reply_only_for_handle():
+    idx = build_index(PDF)
+    retr, store, llm = Retriever(idx), Store(), NullLLM()
+    cal = FakeCalendar([_ev("20261104", "현장체험학습")])
+    res, _ = run("체험학습 일정이 언제인가요?", None, retr, store, llm, save=False, calendar=cal)
+    assert res["route"] == "HANDLE" and res["schedule"]["status"] == "ok"
+    assert res["reply_draft"] == res["schedule"]["reply"] and "현장체험학습" in res["reply_draft"]
+    res, _ = run("체험학습 일정이 언제인가요?", None, retr, store, llm, save=False, calendar=SC_NONE())
+    assert res["schedule"]["status"] == "not_configured" and "현장체험학습" not in res["reply_draft"]
+    res, _ = run("칼 들고 찾아가서 가만 안 둔다. 체험학습 일정이 언제인가요?", None, retr, store, llm, save=False, calendar=cal)
+    assert res["route"] == "ESCALATE" and res["schedule"] is None
+
+
+def SC_NONE():
+    from agent.complaint.schedule import SchoolCalendar
+    return SchoolCalendar()

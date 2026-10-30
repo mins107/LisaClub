@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from . import rules as R
+from . import schedule as SC
 from .llm import parse_json
 
 ROUTE_LABEL = {
@@ -100,6 +101,53 @@ class _Collector:
         return labels
 
 
+# 담임 교사에게 전달할 "필요한 행동". 부서마다 먼저 확인할 것이 다르다(권장 문구이며 매뉴얼 규정은 아니다).
+DEPT_CHECK = {
+    "교무/학사": "성적·출결 등 학사 관련 기록을 확인해 주세요",
+    "생활지도/상담": "학생의 교우 관계와 생활 상황, 이전 상담 내용을 확인해 주세요",
+    "학부모/교직원 소통": "학부모와의 연락·면담 이력을 확인해 주세요",
+    "학교 운영": "민원에서 말한 시설·급식·행사 등의 현황을 확인해 주세요",
+    "기타": "민원에서 말한 사실관계를 확인해 주세요",
+}
+
+
+def _summarize(llm, text):
+    """담임 교사에게 보여 줄 요약. LLM이 있으면 두 문장 이내로, 없거나 실패하면 앞부분 문장을 잘라 쓴다."""
+    if llm.available:
+        try:
+            out = llm.chat("학교 민원을 담임 교사가 바로 파악하도록 한국어 두 문장 이내로 요약한다. 요구 사항 중심으로 쓰고 "
+                           "감정적 표현과 비난은 뺀다. 민원에 없는 내용은 쓰지 않는다.", text).strip()
+            if out:
+                return out[:300]
+        except Exception:  # noqa: BLE001
+            pass
+    out = ""
+    for part in re.split(r"(?<=[.!?。])\s+|\n+", text.strip()):
+        if part and (not out or len(out) + len(part) <= 140):
+            out += (" " if out else "") + part
+        elif out:
+            break
+    return out[:140] + ("…" if len(out) > 140 else "")
+
+
+def _homeroom_handoff(llm, text, student, dept, deadline, ev_assign, ev_due):
+    """담당에 담임 교사가 들어가는 민원: 담임 교사에게 줄 요약과 필요한 행동, 복사해 보낼 전달문."""
+    to = f"{student.class_no[0]}학년 {int(student.class_no[1:])}반 담임 교사" if student else "담임 교사 (학년반 미입력)"
+    summary = _summarize(llm, text)
+    actions = [
+        {"text": DEPT_CHECK.get(dept, DEPT_CHECK["기타"]), "evidence": ev_assign},
+        {"text": f"확인한 내용을 민원대응팀에 알려 주세요 (처리 기한: {deadline})", "evidence": ev_due},
+        {"text": "확인이 어렵거나 학부모 면담이 필요하면 민원대응팀에 먼저 알려 주세요", "evidence": []},
+    ]
+    name = student.display() if student else "학생 미상"
+    message = "\n".join([f"[담임 교사 전달] {to}", f"학생: {name}", "", "■ 민원 요약", summary, "",
+                         "■ 분류", f"일반 처리 · 담당 부서: {dept} · 처리 기한: {deadline}", "",
+                         "■ 요청 사항", *[f"{i}. {a['text']}" for i, a in enumerate(actions, 1)], "",
+                         "※ 자동 분류로 만든 초안입니다. 민원대응팀이 확인한 뒤 전달해 주세요."])
+    return {"to": to, "student": name, "summary": summary, "department": dept, "deadline": deadline,
+            "actions": actions, "message": message}
+
+
 def _draft(llm, text, route, used, notes):
     snippets = "\n".join(f"[{u.label}] {u.ev.text}" for u in used[:6])
     if llm.available:
@@ -146,7 +194,7 @@ def _judge(llm, text, retr):
         return {}
 
 
-def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None, save=True):
+def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None, save=True, calendar=None):
     """student는 store.Student(학생 이름 + 학년반) 또는 None. None이면 학생 기준 이력 판단은 하지 않고 '학생 미상'으로 저장한다.
     save=False면 DB에 저장하지 않는다(시험 입력). 이력 조회는 save와 상관없이 한다.
 
@@ -208,15 +256,18 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
     urg = R.urgency([h for h in mal if h[0].severity >= 3] if route == "ESCALATE" else [])
     dept, _ = R.department(text)
 
+    homeroom = None
     if route == "REJECTABLE":
         col.add("공식 창구 외 경로로 학교민원을 신청하는 경우 접수창구를 민원인에게 안내 필요", "procedure", "공식 창구 안내")
         handler, deadline = "민원대응팀", "즉시 회신(종결 시 사유 통지)"
     elif route == "HANDLE":
-        col.add("처리 담당자 또는 협조자 지정 단순 질의 또는 요청 사항 민원대응팀", "procedure", "담당자 지정")
-        col.add("처리 기한 단순민원 즉시 복합민원 7일 이내 관리자 총괄 민원 14일", "procedure", "처리 기한")
+        ev_assign = col.add("처리 담당자 또는 협조자 지정 단순 질의 또는 요청 사항 민원대응팀", "procedure", "담당자 지정")
+        ev_due = col.add("처리 기한 단순민원 즉시 복합민원 7일 이내 관리자 총괄 민원 14일", "procedure", "처리 기한")
         simple = dept == "기타" or not re.search(r"(확인|조사|사실관계|왜|이유)", text)
         handler = "민원대응팀" if simple else "담당(담임) 교사 협조 + 민원대응팀 총괄"
         deadline = "즉시" if simple else "7일 이내"
+        if "담임" in handler:
+            homeroom = _homeroom_handoff(llm, text, student, dept, deadline, ev_assign, ev_due)
     else:
         handler, deadline = "관리자(교장·교감) 면담, 민원대응팀 공동 대응", "14일 이내(연장 가능)"
 
@@ -240,6 +291,10 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
 
     used = col.items
     reply = _draft(llm, text, route, used, f"{ROUTE_LABEL[route]}. 담당: {handler}. {'; '.join(notes)}")
+    sched = SC.answer(text, student, calendar) if route == "HANDLE" else None
+    if sched and sched["status"] == "ok":       # 학사일정 문의: 일정 API 결과로 직접 답하는 초안
+        reply = sched["reply"]
+        notes.append("학사일정 문의 - 나이스 학사일정 API 조회 결과로 답변 초안 작성(발송 전 일정 확인)")
 
     if route == "ESCALATE":
         reasons = "\n".join(f"  - {c['text']} (근거 {', '.join(c['evidence'])})" for c in criteria["met"]) or "  - (자동 판정 가능한 기준 없음, 담당자 확인)"
@@ -261,7 +316,8 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         "malicious": [h for h in hit_out if h["kind"] == "malicious"],
         "urgency": urg, "department": dept,
         "handler": handler, "deadline": deadline, "notes": notes, "actions": actions,
-        "criteria": criteria, "reply_draft": reply, "transfer_doc": transfer,
+        "criteria": criteria, "reply_draft": reply, "transfer_doc": transfer, "homeroom": homeroom,
+        "schedule": sched,
         "llm_judge": judge or None, "llm_used": llm.available,
         "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out),
         "text_masked": text,
