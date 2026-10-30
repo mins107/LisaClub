@@ -1,3 +1,8 @@
 anthropic>=0.40.0
 python-dotenv>=1.0.0
 pytest>=8.0.0
+# 민원 에이전트(agent/complaint)
+pymupdf>=1.24.0
+rank_bm25>=0.2.2
+openai>=1.40.0      # Ollama 등 OpenAI 호환 서버용 클라이언트
+numpy
