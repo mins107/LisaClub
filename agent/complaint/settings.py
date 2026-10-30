@@ -28,26 +28,31 @@ class Settings:
     transfer_template: str      # 이첩 보고서 서식 파일(.hwpx)
 
 
+def _env(name, default=""):
+    """환경 변수 값. 없거나 비어 있으면(.env에 `NAME=`만 적은 경우, 호스팅 화면에서 비운 경우) 기본값을 쓴다."""
+    return (os.environ.get(name) or "").strip() or default
+
+
 def _code(name):
     """코드 값은 첫 단어만 쓴다(값 뒤에 설명을 붙여 적어도 깨지지 않게)."""
-    return (os.environ.get(name, "").split() or [""])[0]
+    return (_env(name).split() or [""])[0]
 
 
 def load_settings() -> Settings:
     return Settings(
-        llm_base_url=os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1"),
-        llm_model=os.environ.get("LLM_MODEL", "qwen2.5:7b-instruct"),
-        llm_api_key=os.environ.get("LLM_API_KEY", "ollama"),
-        embed_model=os.environ.get("EMBED_MODEL", ""),
-        manual_pdf=os.environ.get("MANUAL_PDF", "data/학교민원처리매뉴얼.pdf"),
-        database_url=os.environ.get("DATABASE_URL", "data/complaints.sqlite"),
-        history_window_days=int(os.environ.get("HISTORY_WINDOW_DAYS", "180")),
-        recontact_hours=int(os.environ.get("RECONTACT_HOURS", "24")),
-        repeat_sim_threshold=float(os.environ.get("REPEAT_SIM_THRESHOLD", "0.8")),
-        repeat_sim_samples=int(os.environ.get("REPEAT_SIM_SAMPLES", "3")),
-        neis_api_key=os.environ.get("NEIS_API_KEY", ""),
+        llm_base_url=_env("LLM_BASE_URL", "http://localhost:11434/v1"),
+        llm_model=_env("LLM_MODEL", "qwen2.5:7b-instruct"),
+        llm_api_key=_env("LLM_API_KEY", "ollama"),
+        embed_model=_env("EMBED_MODEL"),
+        manual_pdf=_env("MANUAL_PDF", "data/학교민원처리매뉴얼.pdf"),
+        database_url=_env("DATABASE_URL", "data/complaints.sqlite"),
+        history_window_days=int(_env("HISTORY_WINDOW_DAYS", "180")),
+        recontact_hours=int(_env("RECONTACT_HOURS", "24")),
+        repeat_sim_threshold=float(_env("REPEAT_SIM_THRESHOLD", "0.8")),
+        repeat_sim_samples=int(_env("REPEAT_SIM_SAMPLES", "3")),
+        neis_api_key=_env("NEIS_API_KEY"),
         neis_office_code=_code("NEIS_OFFICE_CODE"),
         neis_school_code=_code("NEIS_SCHOOL_CODE"),
-        school_name=os.environ.get("SCHOOL_NAME", "").strip(),
-        transfer_template=os.environ.get("TRANSFER_TEMPLATE", "data/특이민원_지원요청보고서_서식.hwpx"),
+        school_name=_env("SCHOOL_NAME"),
+        transfer_template=_env("TRANSFER_TEMPLATE", "data/특이민원_지원요청보고서_서식.hwpx"),
     )

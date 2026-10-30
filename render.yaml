@@ -6,10 +6,44 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     # DB 파일이 없으면 예시 민원으로 한 번 채운 뒤 서버를 켠다. 무료 플랜은 재배포·재시작 때 디스크가 초기화되어 예시 데이터로 돌아간다.
-    startCommand: "[ -f data/complaints.sqlite ] || python samples/seed_demo_db.py; python -m agent.complaint.web --host 0.0.0.0 --llm none"
+    startCommand: "[ -f data/complaints.sqlite ] || python samples/seed_demo_db.py; python -m agent.complaint.web --host 0.0.0.0 --llm auto"
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
+      - key: LLM_BASE_URL
+        sync: false          # LLM 서버 주소(인터넷에서 접속되는 주소)
+      - key: LLM_MODEL
+        sync: false          # 모델 이름
+      - key: LLM_API_KEY
+        sync: false          # LLM API 키(비밀)
+      - key: EMBED_MODEL
+        sync: false          # 임베딩 모델(선택, 비우면 키워드 검색만)
+      - key: MANUAL_PDF
+        sync: false          # 매뉴얼 PDF 경로(비우면 data/학교민원처리매뉴얼.pdf)
+      - key: DATABASE_URL
+        sync: false          # DB 주소(비우면 SQLite 파일)
+      - key: HISTORY_WINDOW_DAYS
+        sync: false          # 이력을 세는 기간(일, 비우면 180)
+      - key: RECONTACT_HOURS
+        sync: false          # 종결 직후 재접촉 기준(시간, 비우면 24)
+      - key: REPEAT_SIM_THRESHOLD
+        sync: false          # 특이 반복 유사도 임계값(비우면 0.8)
+      - key: REPEAT_SIM_SAMPLES
+        sync: false          # 유사도 평가 횟수(비우면 3)
       - key: SCHOOL_NAME
-        sync: false          # 대시보드에서 직접 입력(비워도 동작)
+        sync: false          # 이첩 보고서 학교명
+      - key: TRANSFER_TEMPLATE
+        sync: false          # 이첩 보고서 서식 경로(비우면 기본 서식)
+      - key: SCHOOL_PHONE
+        sync: false          # 공식 창구 전화(비우면 예시 값)
+      - key: SCHOOL_HOURS
+        sync: false          # 공식 창구 운영시간(비우면 예시 값)
+      - key: SCHOOL_ONLINE_URL
+        sync: false          # 온라인 민원 주소(비우면 예시 값)
+      - key: NEIS_API_KEY
+        sync: false          # 나이스 인증키(비밀)
+      - key: NEIS_OFFICE_CODE
+        sync: false          # 시도교육청코드
+      - key: NEIS_SCHOOL_CODE
+        sync: false          # 표준학교코드
