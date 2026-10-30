@@ -5,6 +5,11 @@ __pycache__/
 .env
 .DS_Store
 
+# 민원 DB와 웹에서 입력한 실제 민원 결과 (개인정보 포함 가능)
+data/*.sqlite
+data/*.db
+out/web/
+
 # Claude Code 로컬 전용 설정 (공유/커밋하지 않음)
 .claude/settings.local.json
 

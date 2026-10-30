@@ -1,29 +1,21 @@
-# LisaClub — 해커톤 AI 에이전트 (스캐폴드)
+# 학교 민원 분류 에이전트
 
-주제가 아직 정해지지 않은 상태에서 바로 시작할 수 있도록 만든 최소 골격입니다.
-자세한 가이드(구조 설명, 확장 방법, 체크리스트)는 [CLAUDE.md](CLAUDE.md)를 보세요.
+학교 민원대응팀이 접수한 민원 내용을 텍스트로 입력하면, 처리 방향(거부·종결 가능 / 일반 처리 / 악성 의심)을 분류하고
+학교 민원 처리 매뉴얼 PDF에서 찾은 근거를 쪽 번호와 함께 보여 줍니다. 처리한 민원은 DB에 저장하고 과거 이력을 반영합니다.
+
+구조·설계 원칙·DB·보안 기준은 [CLAUDE.md](CLAUDE.md), 사용법은 [agent/complaint/README.md](agent/complaint/README.md)를 보세요.
 
 ## 빠른 시작
-
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Windows는 .venv\Scripts\activate
+.venv\Scripts\activate          # macOS/Linux는 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # 복사 후 ANTHROPIC_API_KEY 입력
-python -m agent.main
+cp .env.example .env            # LLM·DB 설정 (모두 선택)
+python -m agent.complaint.web --llm none
+# 브라우저에서 http://127.0.0.1:8000
 ```
 
-## 구조
-
-| 경로 | 역할 |
-|---|---|
-| `agent/main.py` | 에이전트 실행 루프 (입력 → Claude 호출 → 도구 실행 → 응답) |
-| `agent/tools.py` | 도구(함수) 정의 — 주제에 맞는 도구를 여기에 추가 |
-| `agent/config.py` | 환경 변수 로딩 |
-| `tests/` | 도구 단위 테스트 (`pytest`로 실행) |
-
 ## 테스트
-
 ```bash
 pytest
 ```

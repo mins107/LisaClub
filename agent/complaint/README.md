@@ -1,27 +1,69 @@
-# 학교 민원 식별 에이전트 (근거 하이라이팅)
+# 학교 민원 분류 에이전트 (민원대응팀용)
 
-구조도 흐름: 민원 → 거부 가능 판단 → 악성 판단 → (비악성) 흥분도·유형·긴급도·담당부서 / (악성) 교육지원청용 문서.
-근거는 LLM이 아니라 매뉴얼 PDF 색인에서만 나오며, 쪽 번호와 줄 좌표로 PDF에 형광펜을 칠한다.
+민원대응팀이 접수한 민원 내용을 텍스트로 입력하면 **처리 방향을 분류**하고, 그 근거를
+학교 민원 처리 매뉴얼 PDF에서 찾아 쪽 번호와 함께 보여 준다. 근거는 LLM이 아니라 매뉴얼 색인에서만 나온다.
 
-## 실행
+## 구조
+```
+입력(웹 화면 web.py / 터미널 __main__.py)
+  -> service.py   매뉴얼 색인·LLM 연결을 한 번만 만들고, 요청마다 classify() 호출
+  -> pipeline.py  개인정보 마스킹 -> 반복 민원 확인 -> 규칙 판정(rules.py) -> 분기
+                  분기: 거부·종결 가능 / 일반 처리 / 악성 의심(이첩 검토)
+                  근거: anchor 문장으로 매뉴얼 색인 검색(manual_index.py, retriever.py)
+  -> highlight.py 분류 결과 화면 + 형광펜 PDF
+```
+
+## 웹 화면 실행
 ```bash
 pip install -r requirements.txt
-cp "학교민원처리매뉴얼.pdf" data/            # PDF는 저장소에 올리지 않는다(.gitignore)
-python -m agent.complaint --demo --llm none  # 규칙 기반, 모델 없이 바로 실행
-python -m agent.complaint --text "개인 번호 알려주세요" --received-at 2026-10-30T22:10 --llm none
-open out/case01/report.html                   # 카피킬러식 화면
+# data/ 폴더에 학교민원처리매뉴얼.pdf 를 넣는다 (저장소에 올리지 않음)
+python -m agent.complaint.web --llm none     # 규칙 기반, 모델 없이 바로 실행
+# 브라우저에서 http://127.0.0.1:8000 접속
 ```
-결과: `out/caseNN/report.html`(원문 하이라이트 + 근거 카드), `evidence_highlighted.pdf`(형광펜 PDF), `result.json`.
+- **입력**: 민원 내용(필수), 민원인 이름·연락처 끝 4자리·접수 시각·통화 시간(선택), "DB에 저장하지 않음"(시험 입력용).
+- **결과**: 분기, 긴급도, 분류(담당 부서), 처리 담당·기한, 흥분도, 분류 사유, 매뉴얼 근거 카드.
+  답변·경고 초안과 교육(지원)청 이첩 보고서 초안은 접혀 있다.
+- 처리한 민원은 DB에 저장된다(아래 "민원 DB"). 이름과 연락처 끝자리를 둘 다 비우면 '작성자 미상'으로 저장하고 작성자 기준 이력 판단은 하지 않는다.
+  접수 시각을 비우면 업무시간 외 판정,
+  통화 시간을 비우면 20분 초과 판정을 하지 않는다.
+- 기본은 내 컴퓨터(127.0.0.1)에서만 접속된다. 다른 PC에서 쓰려면 `--host 0.0.0.0`을 주되,
+  인증이 없으므로 신뢰할 수 있는 내부망에서만 쓴다.
+- 결과 파일은 `out/web/web-날짜-시각-코드/`(report.html, result.json, evidence_highlighted.pdf)에 남는다.
+- 프로그램 연동용: `POST /api/classify` 에 JSON(`text`, `name`, `phone`(끝 4자리), `received_at`, `call_minutes`)을 보내면 JSON 결과를 준다.
 
-## 무료 모델 연결 (선택)
+## 민원 DB
+처리한 민원은 `DATABASE_URL`(기본 SQLite `data/complaints.sqlite`)에 저장된다. 테이블은 처음 실행할 때 자동으로 만들어진다.
+
+| 테이블 | 내용 |
+|---|---|
+| `complainants` | 작성자. 이름 + 연락처 끝 4자리가 같으면 같은 작성자 |
+| `complaints` | 민원 1건 = 1행. 접수 시각·통화 시간·마스킹된 원문·분기·긴급도·담당 부서·담당·기한·흥분도·반복 횟수·검토 필요 여부, 전체 결과(`result_json`) |
+| `complaint_hits` | 민원별로 걸린 거부·악성 규칙(종류, 규칙 키, 라벨, 심각도) |
+
+- **작성자 식별**: 이름과 연락처 끝 4자리를 둘 다 입력해야 한다. 연락처는 끝 4자리만 저장하며, 둘 다 비우면 '작성자 미상'으로 저장한다.
+- **이력 판단**(매뉴얼 근거는 CLAUDE.md의 표 참고): 동일·유사 민원 3회 이상 반복, 종결 직후 재접촉, 과거 악성 이력(재접촉 1·2차 대응),
+  반복 악성 시 접촉 제한 검토. 기간은 `HISTORY_WINDOW_DAYS`(기본 180일), "바로"의 기준은 `RECONTACT_HOURS`(기본 24시간)이다.
+  다른 작성자의 매우 비슷한 민원(0.5 이상)은 결과 화면의 "과거 이력"에 참고용으로만 나온다.
+- SQL DB(PostgreSQL·MySQL 등)로 바꾸려면 `.env`의 `DATABASE_URL`만 바꾼다. 예: `postgresql+psycopg://사용자:비밀번호@주소:5432/DB이름`
+  (드라이버 `pip install "psycopg[binary]"` 필요).
+- **Upstash는 Redis 계열이라 `DATABASE_URL`로 붙지 않는다.** 이관할 때는 `store.py`의 `find_history`·`save`를 Redis로 구현한 저장소가 필요하다
+  (지금은 로컬 SQLite로 확인).
+- 저장되는 원문은 전화번호·주민번호·이메일이 마스킹된 텍스트이며, 이름은 마스킹하지 않는다.
+
+## 터미널 실행
 ```bash
-# 1) https://ollama.com 설치 후
-ollama pull qwen2.5:7b-instruct
-ollama pull bge-m3                       # 임베딩 검색까지 쓸 때
-# 2) .env 에 EMBED_MODEL=bge-m3 추가
-python -m agent.complaint --demo --llm on
+python -m agent.complaint --demo --llm none
+python -m agent.complaint --text "개인 번호 알려주세요" --name 홍길동 --phone-last4 1234 --received-at 2026-10-30T22:10 --llm none
+```
+
+## LLM 연결 (선택)
+`.env`에 OpenAI 호환 서버 정보를 넣는다(`.env.example` 참고).
+```
+LLM_BASE_URL=...   LLM_MODEL=...   LLM_API_KEY=...
 ```
 LLM은 (1) 악성 여부 2차 의견 (2) 답변 초안에만 쓰이고, 인용 라벨이 존재하지 않으면 초안을 폐기한다.
+`--llm auto`(기본)는 연결이 안 되면 규칙 기반으로 넘어가고, `--llm on`은 연결 실패 시 오류로 멈춘다.
+민원 원문(마스킹 후)이 LLM 서버로 전송되므로 외부 서비스를 쓸 때는 개인정보 처리 기준을 확인한다.
 
 ## 테스트
 ```bash

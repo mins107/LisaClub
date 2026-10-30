@@ -26,6 +26,16 @@ ACTIONS = {
     "doxxing": ("게시물 증거 확보, 경고문 발송, 법적 조치 협의", "온라인 민원 경고공문 통지 법적조치 등을 취할 수 있다는 경고문구"),
 }
 
+# 같은 작성자에게 과거 악성(특이) 민원 이력이 있을 때의 재접촉 대응. 단계는 이력 건수(1건=1차, 2건 이상=2차).
+RECONTACT = {
+    1: ("과거 악성 민원 이력이 있는 민원인의 재접촉(1차): 진정된 경우 정상 응대하고, 폭언을 지속하면 통화 종료 후 관리자 보고",
+        "동일 민원인과 재통화 시 1차 민원인이 진정된 경우 정상 응대하고 폭언을 지속할 경우 통화 종료"),
+    2: ("과거 악성 민원 이력이 반복된 민원인의 재접촉(2차 이상): 상급자(교감 등)가 응대해 불만사항을 파악하고 경고한 뒤 종료",
+        "2차 상급자가 응대하고 경고 후 통화 종료 민원인의 불만사항 등을 파악하고 폭언 등에 대한 경고 조치"),
+}
+CONTACT_LIMIT = ("악성 민원이 반복되어 업무를 방해하는 경우 출입·면담 제한 검토(예약 면담, 관리자 면담, 서면·온라인 창구 전환)",
+                 "흉기 소지 폭언 폭행 반복적 민원 제기 등으로 공무 업무를 방해한 자에 대한 출입 제한 퇴거 조치 가능")
+
 PII = [(re.compile(r"01[016789][-\s]?\d{3,4}[-\s]?\d{4}"), "[전화번호]"),
        (re.compile(r"\b\d{6}[-\s]?[1-4]\d{6}\b"), "[주민번호]"),
        (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "[이메일]")]
@@ -109,14 +119,23 @@ def _judge(llm, text, retr):
         return {}
 
 
-def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=None):
+def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=None, save=True):
+    """complainant는 store.Author 또는 None. None이면 작성자 기준 이력 판단은 하지 않고 '작성자 미상'으로 저장한다.
+    save=False면 DB에 저장하지 않는다(시험 입력). 이력 조회는 save와 상관없이 한다.
+
+    이력 판단(매뉴얼 근거):
+      - 동일·유사 민원 3회 이상 반복 -> 종결 가능 (PDF 11·16·58쪽)
+      - 3회 이상 유사 민원을 종료했는데도 지속 -> 교육(지원)청 이첩 (PDF 16쪽)
+      - 종결 민원 직후 재접촉 -> 거부 가능 (PDF 11쪽)
+      - 과거 악성 이력이 있는 민원인의 재접촉 -> 1차·2차 대응 (PDF 49쪽), 반복 시 접촉 제한 검토 (PDF 26쪽)"""
     text = mask_pii(text)
-    prior = store.similar_prior(complainant, text)
+    history = store.find_history(complainant, text)
+    prior = history["same_author"]
     repeat = len(prior) + 1
-    closed_before = any(":repeat" in p[2] for p in prior)
+    closed_before = any(p["closed"] for p in prior)
 
     mal = R.detect_malicious(text, repeat)
-    rej = R.detect_reject(text, received_at, call_minutes, repeat)
+    rej = R.detect_reject(text, received_at, call_minutes, repeat, recontact=bool(history["recent_closed"]))
     judge = _judge(llm, text, retr)
     if judge.get("malicious") and not any(r.severity >= 3 for r, _, _ in mal):
         mal.append((R.Rule("llm", "LLM 판단 악성 의심", "malicious", "",
@@ -145,6 +164,16 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
         if r.key in ACTIONS:
             act, anchor = ACTIONS[r.key]
             actions.append({"text": act, "evidence": col.add(anchor, "procedure", f"현장 대응: {r.label}")})
+
+    pm = history["prior_malicious"]
+    if pm:
+        stage = min(pm, 2)
+        notes.append(f"같은 작성자의 과거 악성(특이) 의심 민원 {pm}건 이력 - 재접촉 {stage}차 대응 참고")
+        text_a, anchor_a = RECONTACT[stage]
+        actions.append({"text": text_a, "evidence": col.add(anchor_a, "procedure", f"과거 악성 이력 재접촉 {stage}차 대응")})
+        if route == "ESCALATE":
+            text_l, anchor_l = CONTACT_LIMIT
+            actions.append({"text": text_l, "evidence": col.add(anchor_l, "procedure", "반복 악성 민원 접촉 제한 검토")})
 
     score, level = R.excitement(text, mal)
     urg = R.urgency([h for h in mal if h[0].severity >= 3] if route == "ESCALATE" else [], level)
@@ -198,21 +227,27 @@ def run(text, complainant, retr, store, llm, *, received_at=None, call_minutes=N
             f"**추가 확인 필요 기준**\n" + "\n".join(f"  - {c}" for c in criteria["to_check"]) +
             "\n\n※ 본 문서는 보조 도구가 만든 초안이며 학교장 확인 후 제출한다.")
 
-    store.add(complainant, text, route + (":repeat" if any(r.key == "repeat" for r, _, _ in rej) else ""))
-
     result = {
         "route": route, "route_label": ROUTE_LABEL[route], "repeat_count": repeat,
         "reject": [h for h in hit_out if h["kind"] == "reject"],
         "malicious": [h for h in hit_out if h["kind"] == "malicious"],
-        "excitement": {"score": score, "level": level}, "urgency": urg, "department": dept,
+        "excitement": {"score": score, "level": level,
+                       "factors": [{"label": n, "count": c, "points": c * w}
+                                   for n, c, w in R.excitement_factors(text, mal) if c]}, "urgency": urg, "department": dept,
         "handler": handler, "deadline": deadline, "notes": notes, "actions": actions,
         "criteria": criteria, "reply_draft": reply, "transfer_doc": transfer,
         "llm_judge": judge or None, "llm_used": llm.available,
-        "needs_human_review": route != "HANDLE" or any(not h["confident"] for h in hit_out),
+        "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out),
         "text_masked": text,
+        "history": {"author": history["author"], "same_author": prior, "similar_others": history["similar_others"],
+                    "recent_closed": history["recent_closed"], "prior_malicious": pm},
+        "complaint_id": None,
         "spans": [{"start": a, "end": b, "kind": k, "label": l} for a, b, k, l in sorted(spans)],
         "evidence": [{"label": u.label, "id": u.ev.id, "page": u.ev.page, "printed_page": u.ev.printed_page,
                       "cite": u.ev.cite(), "text": u.ev.text, "role": u.role, "reason": u.reason}
                      for u in used],
     }
+    if save:
+        result["complaint_id"] = store.save(result, complainant, received_at, call_minutes,
+                                            closed_by_repeat=any(r.key == "repeat" for r, _, _ in rej))
     return result, used

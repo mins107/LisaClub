@@ -1,15 +1,10 @@
-"""실행: python -m agent.complaint --demo | --text "민원" [--complainant P1]"""
+"""터미널 실행: python -m agent.complaint --demo | --text "민원" [--name 홍길동 --phone-last4 1234]
+웹 화면은 python -m agent.complaint.web"""
 import argparse
 import json
 import os
 
-from .highlight import annotate, render_html
-from .llm import connect
-from .manual_index import build_index
-from .pipeline import run
-from .retriever import Retriever
-from .settings import load_settings
-from .store import Store
+from .service import ComplaintService
 
 DEMO = "samples/demo_complaints.jsonl"
 
@@ -17,7 +12,8 @@ DEMO = "samples/demo_complaints.jsonl"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--text")
-    ap.add_argument("--complainant", default="P001")
+    ap.add_argument("--name", help="민원인 이름 (--phone-last4와 함께 쓰면 작성자 이력을 반영)")
+    ap.add_argument("--phone-last4", help="민원인 연락처 끝 4자리")
     ap.add_argument("--demo", action="store_true")
     ap.add_argument("--pdf")
     ap.add_argument("--out", default="out")
@@ -26,36 +22,29 @@ def main():
     ap.add_argument("--call-minutes", type=float)
     ap.add_argument("--db")
     a = ap.parse_args()
-
-    s = load_settings()
-    pdf = a.pdf or s.manual_pdf
-    if not os.path.exists(pdf):
-        raise SystemExit(f"매뉴얼 PDF가 없습니다: {pdf} (data/ 폴더에 넣거나 --pdf로 지정)")
-    llm = connect(s, a.llm)
-    index = build_index(pdf)
-    embed = llm.embed if (llm.available and s.embed_model) else None
-    retr = Retriever(index, embed)
-    store = Store(a.db or (":memory:" if a.demo else s.db_path))
-    print(f"근거 단위 {len(index)}개 색인 완료 / LLM: {'연결' if llm.available else '미연결(규칙 기반)'}")
-
-    cases = []
-    if a.demo:
-        cases = [json.loads(l) for l in open(DEMO, encoding="utf-8") if l.strip()]
-    elif a.text:
-        cases = [{"text": a.text, "complainant": a.complainant,
-                  "received_at": a.received_at, "call_minutes": a.call_minutes}]
-    else:
+    if not (a.demo or a.text):
         ap.error("--text 또는 --demo 가 필요합니다")
 
+    try:
+        svc = ComplaintService(a.pdf, a.db or (":memory:" if a.demo else None), a.llm)
+    except FileNotFoundError as e:
+        raise SystemExit(str(e))
+    print(f"근거 단위 {len(svc.index)}개 색인 완료 / LLM: {'연결' if svc.llm.available else '미연결(규칙 기반)'}")
+
+    if a.demo:
+        cases = [json.loads(l) for l in open(DEMO, encoding="utf-8") if l.strip()]
+    else:
+        cases = [{"text": a.text, "name": a.name, "phone_last4": a.phone_last4,
+                  "received_at": a.received_at, "call_minutes": a.call_minutes}]
+
     for i, c in enumerate(cases, 1):
-        res, used = run(c["text"], c.get("complainant", a.complainant), retr, store, llm,
-                        received_at=c.get("received_at"), call_minutes=c.get("call_minutes"))
+        try:
+            res, used = svc.classify(c["text"], c.get("name"), c.get("phone_last4"),
+                                     c.get("received_at"), c.get("call_minutes"))
+        except ValueError as e:
+            raise SystemExit(str(e))
         d = os.path.join(a.out, f"case{i:02d}")
-        _, snips = annotate(pdf, used, d) if used else (None, {})
-        if used:
-            render_html(res, snips, os.path.join(d, "report.html"))
-        with open(os.path.join(d, "result.json"), "w", encoding="utf-8") as f:
-            json.dump(res, f, ensure_ascii=False, indent=2)
+        svc.save_outputs(res, used, d)
         print(f"[{i}] {res['route_label']} | 긴급도 {res['urgency']} | 분류 {res['department']} | "
               f"근거 {', '.join(e['label'] + '=' + e['cite'] for e in res['evidence'][:3])} -> {d}/report.html")
 

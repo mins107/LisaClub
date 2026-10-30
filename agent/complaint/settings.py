@@ -16,7 +16,9 @@ class Settings:
     llm_api_key: str
     embed_model: str      # 빈 문자열이면 BM25만 사용
     manual_pdf: str
-    db_path: str
+    database_url: str     # SQLAlchemy 접속 주소 또는 SQLite 파일 경로
+    history_window_days: int    # 반복·악성 이력을 세는 기간(일)
+    recontact_hours: int        # 종결 후 '바로' 연락이 온 것으로 보는 시간
 
 
 def load_settings() -> Settings:
@@ -26,5 +28,7 @@ def load_settings() -> Settings:
         llm_api_key=os.environ.get("LLM_API_KEY", "ollama"),
         embed_model=os.environ.get("EMBED_MODEL", ""),
         manual_pdf=os.environ.get("MANUAL_PDF", "data/학교민원처리매뉴얼.pdf"),
-        db_path=os.environ.get("DB_PATH", "data/complaints.sqlite"),
+        database_url=os.environ.get("DATABASE_URL", "data/complaints.sqlite"),
+        history_window_days=int(os.environ.get("HISTORY_WINDOW_DAYS", "180")),
+        recontact_hours=int(os.environ.get("RECONTACT_HOURS", "24")),
     )

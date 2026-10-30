@@ -94,9 +94,12 @@ def _spans(rules, text):
     return hits
 
 
-def detect_reject(text, received_at=None, call_minutes=None, repeat_count=1):
+def detect_reject(text, received_at=None, call_minutes=None, repeat_count=1, recontact=False):
     hits = _spans(REJECT, text)
     extra = []
+    if recontact:
+        extra.append(Rule("recontact", "종결 직후 재접촉", "reject", "",
+                          "종결 민원으로 종결하였으나 바로 연락이 오는 등 특이민원이 계속 예상되는 경우", 0, False))
     if received_at:
         dt = datetime.fromisoformat(received_at)
         if dt.weekday() >= 5 or not (8 <= dt.hour < 17):
@@ -119,14 +122,23 @@ def detect_malicious(text, repeat_count=1):
     return hits
 
 
+EXCITE_CAUTION, EXCITE_HIGH = 25, 55     # 이 점수 이상이면 각각 '주의', '고위험'
+
+
+def excitement_factors(text, malicious_hits):
+    """흥분도 점수의 구성 요소: (이름, 개수, 개수당 점수). 개수는 느낌표 5개, 물음표 4개까지만 센다."""
+    return [
+        ("느낌표(!)", min(text.count("!"), 5), 8),
+        ("물음표(?)", min(text.count("?"), 4), 4),
+        ("격한 표현", len(re.findall(EXCITED_WORDS, text)), 10),
+        ("욕설·모욕·협박", sum(1 for r, _, _ in malicious_hits if r.key in ("abuse", "insult", "threat")), 25),
+        ("강한 표기(!!, ??, ;; 등)", len(re.findall(r"(ㅡㅡ|;;|!{2,}|\?{2,}|ㅠㅠ{2,})", text)), 10),
+    ]
+
+
 def excitement(text, malicious_hits):
-    ex = min(text.count("!"), 5)
-    q = min(text.count("?"), 4)
-    emo = len(re.findall(EXCITED_WORDS, text))
-    swear = sum(1 for r, _, _ in malicious_hits if r.key in ("abuse", "insult", "threat"))
-    loud = len(re.findall(r"(ㅡㅡ|;;|!{2,}|\?{2,}|ㅠㅠ{2,})", text))
-    score = min(100, ex * 8 + q * 4 + emo * 10 + swear * 25 + loud * 10)
-    level = "고위험" if score >= 55 else "주의" if score >= 25 else "낮음"
+    score = min(100, sum(n * w for _, n, w in excitement_factors(text, malicious_hits)))
+    level = "고위험" if score >= EXCITE_HIGH else "주의" if score >= EXCITE_CAUTION else "낮음"
     return score, level
 
 
