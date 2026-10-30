@@ -94,7 +94,6 @@ background:color-mix(in srgb,var(--k) 15%,transparent);color:var(--k);border:1px
 .cols{display:flex;gap:16px;align-items:flex-start} .col{flex:1;min-width:0} .col.side{flex:0 0 42%}
 @media(min-width:901px){.sticky{position:sticky;top:60px;max-height:calc(100vh - 76px);overflow-y:auto;padding-right:2px}}
 @media(max-width:900px){.cols{flex-direction:column}.col.side{flex:1;width:100%}}
-.ev-tabs{display:flex;gap:6px;margin:0 0 10px;position:sticky;top:0;z-index:2;background:var(--bg);padding:2px 0 6px}
 .ev-tab{flex:1;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:10px;padding:7px 8px;
 font:inherit;font-size:.88em;font-weight:700;cursor:pointer} .ev-tab b{margin-left:4px}
 .ev-tab.on{border-color:var(--primary);color:var(--primary);box-shadow:inset 0 -3px 0 var(--primary)}
@@ -117,7 +116,69 @@ details.drawer>summary{cursor:pointer;font-weight:700} .drawer-body{margin-top:1
 .btn{display:inline-block;border:1px solid var(--border);background:var(--soft);color:var(--text);border-radius:8px;
 padding:4px 12px;font:inherit;font-size:.85em;cursor:pointer;text-decoration:none} .btn:hover{border-color:var(--primary)}
 .foot{font-size:.82em;color:var(--muted);margin:4px 0 0}
-@media print{.topbar,form,.btn,.noprint,.ev-tabs{display:none!important} body{background:#fff}.sticky{position:static;max-height:none}
+
+/* 근거 번호 말풍선 */
+.tag[data-tip]{position:relative;cursor:help}
+.tag[data-tip]:hover::after,.tag[data-tip]:focus::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;
+width:max-content;max-width:min(340px,80vw);white-space:normal;text-align:left;background:#111827;color:#f9fafb;padding:9px 12px;border-radius:10px;
+font-size:.86rem;font-weight:400;line-height:1.55;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.tag[data-tip=""]:hover::after,.tag[data-tip=""]:focus::after{display:none}
+/* 매뉴얼 근거(간소화) */
+.ev2-wrap{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:700px){.ev2-wrap{grid-template-columns:1fr}}
+.ev2{border-radius:12px;background:var(--soft);padding:12px 14px;border-top:4px solid var(--g)} .ev2.type{--g:var(--red)} .ev2.proc{--g:var(--green)}
+.ev2 h4{margin:0 0 8px;font-size:.92em} .ev2 ul{list-style:none;margin:0;padding:0}
+.ev2 li{padding:8px 0;border-top:1px solid var(--border);font-size:.9em;line-height:1.6} .ev2 li:first-child{border-top:0}
+.ev2 .ev-label{display:inline-block;font-weight:800;font-size:.8em;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:0 6px;margin-right:6px}
+.cd-note{border-left:4px solid var(--blue)} .cd-note p{margin:0 0 6px;line-height:1.7}
+/* ---- 민원 상세(cd-*): 왼쪽 내용, 오른쪽 처리 정보 ---- */
+.cd{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+.cd-main,.cd-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+@media(max-width:900px){.cd{display:flex;flex-direction:column;align-items:stretch}.cd-main,.cd-side{display:contents}
+.o1{order:1}.o2{order:2}.o3{order:3}.o4{order:4}.o5{order:5}.o6{order:6}.o7{order:7}.o8{order:8}.o9{order:9}}
+.cd-card{background:var(--card);border-radius:16px;padding:20px 22px;box-shadow:0 1px 2px rgba(15,23,42,.05),0 6px 20px rgba(15,23,42,.05)}
+@media(prefers-color-scheme:dark){.cd-card{box-shadow:none;border:1px solid var(--border)}}
+.cd-label{display:flex;align-items:center;gap:8px;font-size:.78em;font-weight:700;letter-spacing:.02em;color:var(--muted);margin:0 0 12px}
+.cd-label .cd-act{margin-left:auto}
+.cd-text{font-size:1.08em;line-height:1.85;margin:0;white-space:pre-wrap;word-break:break-word}
+.cd-reply{font-size:1em;line-height:1.8;padding:14px 16px;border-radius:12px;background:var(--soft)}
+.cd-tag{display:inline-block;font-size:.85em;font-weight:600;color:var(--muted);background:var(--soft);border-radius:20px;padding:1px 9px}
+.cd-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--border);background:var(--card);color:var(--text);
+border-radius:10px;padding:6px 14px;font:inherit;font-size:.86em;font-weight:600;cursor:pointer;text-decoration:none}
+.cd-btn:hover{border-color:var(--primary);color:var(--primary)}
+.cd-btn.solid{background:var(--primary);border-color:var(--primary);color:#fff}.cd-btn.solid:hover{color:#fff;filter:brightness(1.08)}
+.cd-btn.danger{background:var(--red);border-color:var(--red);color:#fff}.cd-btn.wide{width:100%;padding:10px 14px}
+details.cd-orig{margin-top:14px} details.cd-orig>summary{cursor:pointer;font-size:.86em;color:var(--muted);font-weight:600;list-style:none}
+details.cd-orig>summary::before{content:"▸ "} details.cd-orig[open]>summary::before{content:"▾ "}
+details.cd-orig pre{margin-top:10px;padding:12px 14px;border-radius:12px;background:var(--soft);font-size:.95em;line-height:1.8}
+/* 오른쪽: 처리 정보 */
+.cd-facts{border-top:4px solid var(--c)}
+.cd-route{font-size:1.08em;font-weight:800;color:var(--c);margin:0 0 4px}
+.cd-review{font-size:.84em;color:var(--warn-text);background:var(--warn-bg);border-radius:8px;padding:5px 10px;margin:8px 0 2px}
+.cd-dl{margin:12px 0 0;display:grid;grid-template-columns:auto 1fr;gap:10px 14px;font-size:.95em}
+.cd-dl dt{color:var(--muted)} .cd-dl dd{margin:0;font-weight:700;text-align:right}
+.cd-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:1px;background:var(--k)}
+.cd-due{display:block;font-size:.82em;font-weight:600;color:var(--muted)} .cd-due.over{color:var(--red)}
+.cd-pattern{display:flex;gap:10px;align-items:flex-start;font-weight:700;line-height:1.5}
+.cd-pattern i{font-style:normal;flex:0 0 auto;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+font-size:.8em;color:#fff;background:var(--k)}
+.cd-sub{font-size:.84em;color:var(--muted);margin:8px 0 0}
+.cd-list{list-style:none;margin:12px 0 0;padding:0;font-size:.88em}
+.cd-list li{padding:8px 0;border-top:1px solid var(--border)} .cd-list .m{color:var(--muted);font-size:.9em}
+.cd-flag{margin:10px 0 0;padding:7px 10px;border-radius:8px;background:var(--warn-bg);color:var(--warn-text);font-size:.85em}
+.cd-esc{border-top:4px solid var(--red)} .cd-esc h4{margin:0 0 4px;font-size:.98em}
+.cd-crit{list-style:none;margin:10px 0 14px;padding:0}
+.cd-crit li{padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--red) 8%,transparent);margin-bottom:8px}
+.cd-crit b{display:block;font-size:.92em} .cd-crit span{display:block;font-size:.82em;color:var(--muted);margin-top:3px}
+.cd-crit em{font-style:normal;font-size:.75em;font-weight:800;color:var(--red);margin-left:4px}
+.cd-check{font-size:.84em;color:var(--muted);margin:0 0 14px;padding-left:18px}
+.cd-form{display:grid;gap:8px} .cd-form select,.cd-form input,.cd-form textarea{width:100%;padding:8px 10px;font:inherit;font-size:.9rem;
+color:var(--text);background:var(--soft);border:1px solid var(--border);border-radius:10px} .cd-form textarea{min-height:64px;resize:vertical}
+.cd-last{font-size:.8em;color:var(--muted);margin:10px 0 0}
+details.cd-more{background:var(--card);border-radius:16px;padding:16px 22px;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+details.cd-more>summary{cursor:pointer;font-weight:700} details.cd-more>summary small{font-weight:400;margin-left:6px}
+details.cd-more .box{box-shadow:none;margin:14px 0 0}
+.cd-foot{font-size:.76em;color:var(--muted);text-align:center;margin:4px 0 0}
+@media print{.topbar,form,.btn,.cd-btn,.noprint,.ev-tabs{display:none!important} body{background:#fff}.sticky{position:static;max-height:none}
 .ev-group{display:block!important}}
 """
 
@@ -126,11 +187,7 @@ document.addEventListener('click',function(e){
 var b=e.target.closest('[data-copy]');
 if(b){var el=document.getElementById(b.dataset.copy);if(el&&navigator.clipboard){navigator.clipboard.writeText(el.innerText).then(function(){
 var o=b.textContent;b.textContent='복사됨';setTimeout(function(){b.textContent=o},1500)}).catch(function(){})}return}
-var tab=e.target.closest('[data-tab]');
-if(tab){showTab(tab.dataset.tab);return}
-if(e.target.closest('a.tag')){showTab('all')}});
-function showTab(name){document.querySelectorAll('[data-tab]').forEach(function(t){t.classList.toggle('on',t.dataset.tab===name)});
-document.querySelectorAll('[data-group]').forEach(function(g){g.style.display=(name==='all'||g.dataset.group===name)?'':'none'})}
+});
 """
 
 
@@ -148,32 +205,24 @@ def _marked_text(result):
     return "".join(parts)
 
 
-def _original_box(result):
-    """민원 내용: 기본은 순화문, 원문(거친 표현 강조 포함)은 [원문 보기]를 눌러야 펼쳐진다."""
-    from .soften import METHOD_LABEL
-    soft = result.get("text_soft") or result["text_masked"]
-    method = result.get("text_soft_method", "none")
-    legend = "".join(f'<span><mark style="background:{CSS[k]}">&nbsp;&nbsp;&nbsp;</mark> {n}</span>'
-                     for k, n in ROLE_NAME.items() if k in ("reject", "malicious"))
-    return (f'<div class="box"><h3>민원 내용 <small>(순화문 · 개인정보 마스킹)</small></h3>'
-            f'<pre class="orig">{html.escape(soft)}</pre>'
-            f'<p class="foot" style="margin:6px 0">{html.escape(METHOD_LABEL.get(method, ""))}. 판정은 원문으로 합니다.</p>'
-            f'<details class="drawer"><summary>원문 보기 <small>(폭언·욕설이 포함될 수 있습니다)</small></summary>'
-            f'<div class="drawer-body"><pre class="orig">{_marked_text(result)}</pre>'
-            f'<div class="legend" style="margin-top:8px">{legend}</div></div></details></div>')
+def _tips(result):
+    """근거 번호 -> 매뉴얼 문장(말풍선에 쓴다)."""
+    return {e["label"]: e["text"] for e in result.get("evidence", [])}
 
 
-def _tags(labels):
-    """근거 번호. 누르면 오른쪽 매뉴얼 근거 카드로 이동한다."""
-    return "".join(f'<a class="tag" href="#ev-{html.escape(l)}">{html.escape(l)}</a>' for l in labels or [])
+def _tags(labels, tips=None):
+    """근거 번호. 마우스를 올리거나(휴대폰은 누르면) 매뉴얼 문장이 말풍선으로 보인다."""
+    tips = tips or {}
+    return "".join(f'<span class="tag" tabindex="0" data-tip="{html.escape(tips.get(l, ""), quote=True)}">{html.escape(l)}</span>'
+                   for l in labels or [])
 
 
-def _chips(items, cls, with_severity=False):
+def _chips(items, cls, with_severity=False, tips=None):
     out = []
     for i in items:
         sev = f' · 심각도 {i["severity"]}' if with_severity and i.get("severity") else ""
         hint = f' title="감지된 표현: {html.escape(str(i["matched"]))}"' if i.get("matched") else ""
-        out.append(f'<span class="chip {cls}"{hint}>{html.escape(i["label"])}{sev}{_tags(i.get("evidence"))}</span>')
+        out.append(f'<span class="chip {cls}"{hint}>{html.escape(i["label"])}{sev}{_tags(i.get("evidence"), tips)}</span>')
     return "".join(out) or '<span class="muted">해당 없음</span>'
 
 
@@ -191,28 +240,10 @@ def _todo(result):
     for n, (name, items) in enumerate(phases, 1):
         steps = "".join(
             f'<li><label><input type="checkbox"><span class="st-text">{html.escape(a["text"])}</span>'
-            f'<span class="why">{html.escape(" · ".join(a["reasons"]))}</span>{_tags(a.get("evidence"))}</label></li>'
+            f'<span class="why">{html.escape(" · ".join(a["reasons"]))}</span></label></li>'
             for a in items)
         out.append(f'<li class="phase"><div class="phase-name"><i>{n}</i>{html.escape(name)}</div><ul class="steps">{steps}</ul></li>')
     return f'<ol class="phases">{"".join(out)}</ol>'
-
-
-def _transfer_box(result, href):
-    """상위기관 이첩: 매뉴얼 12쪽 이첩 기준 체크리스트에서 어느 항목에 해당하는지와 그 이유, 보고서(.docx) 내려받기."""
-    from .transfer import STATE_MARK, build_transfer
-    t = build_transfer(result)
-    rows = "".join(
-        f'<li class="ck-{"y" if c["state"] in ("해당", "해당 가능") else "n"}"><b>{STATE_MARK[c["state"]]} {c["no"]}. {html.escape(c["state"])}</b> '
-        f'{html.escape(c["text"])}<div class="sm">{"<br>".join(html.escape(r) for r in c["reasons"])}</div></li>' for c in t["checklist"])
-    why = "<br>".join(html.escape(x) for x in t["reason_lines"])
-    link = (f'<a class="btn" href="{html.escape(href)}">이첩 보고서(.hwpx) 내려받기</a>' if href else
-            '<span class="foot">저장된 민원의 상세 화면에서 보고서 파일을 내려받을 수 있습니다.</span>')
-    return (f'<div class="box"><h3>상위기관 이첩 검토 (매뉴얼 12쪽 이첩 기준 · 55쪽 보고서 서식)</h3>'
-            f'<div class="banner" style="margin-bottom:8px"><b>이첩 사유</b><br>{why}</div>'
-            f'<style>.ckl{{list-style:none;padding:0;margin:0}}.ckl li{{padding:7px 10px;border-radius:8px;margin:4px 0;border:1px solid var(--border)}}'
-            f'.ckl li.ck-y{{background:color-mix(in srgb,var(--red) 10%,transparent);border-color:var(--red)}}.ckl .sm{{font-size:.84em;color:var(--muted);margin-top:2px}}</style>'
-            f'<ul class="ckl">{rows}</ul>'
-            f'<p class="foot">■ 해당 · ▲ 해당 가능(사람이 확인) · □ 확인 필요(학교 기록이 필요한 항목) · － 해당 없음. 학교장이 최종 판단합니다.</p>{link}</div>')
 
 
 def _schedule_note(sc):
@@ -224,102 +255,175 @@ def _schedule_note(sc):
     return (f'<p class="foot" style="margin:0 0 8px"><b>{head}</b> {html.escape(sc.get("message") or "")}</p>')
 
 
-def _history_box(result):
-    """같은 학생의 과거 민원 요약과, 내용이 비슷한 과거 민원 목록."""
+def _pattern_line(result):
+    """같은 학생의 반복 패턴 한 줄(제목 줄). 반복 횟수와 이전 종결 여부로 정한다."""
     h = result.get("history") or {}
-    a = h.get("student")
-    head = (f'<b>{html.escape(a["name"])}({html.escape(a["class_no"])})</b> 학생의 이전 민원 {a["total"]}건 '
-            f'(악성 의심 {a["escalated"]}건, 최근 {html.escape(a["last_at"] or "-")})') if a else \
-        '<span class="muted">이 학생의 이전 민원이 없습니다 (처음 접수했거나 학생 이름·학년반을 입력하지 않았습니다)</span>'
-    rows = [(x, "같은 학생") for x in h.get("same_student", [])] + [(x, "다른 학생") for x in h.get("similar_others", [])]
-    body = "".join(
-        f'<tr><td>#{x["id"]}</td><td>{x["created_at"]}</td><td>{html.escape(x["student"] or "학생 미상")} · {kind}</td>'
-        f'<td>{html.escape(ROUTE_SHORT.get(x["route"], x["route"]))}</td><td>{x["similarity"]:.0%}</td>'
-        f'<td>{html.escape(x["snippet"])}</td></tr>' for x, kind in rows)
-    table = (f'<div class="tbl"><table><tr><th>번호</th><th>접수일</th><th>학생</th><th>당시 분류</th>'
-             f'<th>유사도</th><th>내용</th></tr>{body}</table></div>') if rows else ""
-    flags = []
-    if h.get("recent_closed"):
-        rc = h["recent_closed"]
-        flags.append(f'종결 직후 재접촉: #{rc["id"]}번 민원({rc["created_at"]})을 종결한 뒤 바로 다시 연락함')
-    if h.get("prior_malicious"):
-        flags.append(f'과거 악성(특이) 의심 민원 {h["prior_malicious"]}건 이력 (기간 내)')
-    flag_html = "".join(f'<div class="warn">{html.escape(f)}</div>' for f in flags)
-    return f'<div class="box"><h3>과거 이력</h3>{head}{flag_html}{table}</div>'
+    n = result.get("repeat_count", 1)
+    closed_before = any(p.get("closed") for p in h.get("same_student", []))
+    if n >= 3 and closed_before:
+        return "warn", f"반복 패턴: 같은 학생의 동일·유사 민원 {n}회째이고, 이전에 종결한 민원이 있는데 다시 제기됨 → 이첩 검토"
+    if n >= 3:
+        return "warn", f"반복 패턴: 같은 학생의 동일·유사 민원 {n}회째 (3회 이상 → 종결 가능 검토)"
+    if n == 2:
+        return "note", "같은 학생의 동일·유사 민원이 2회째입니다"
+    return "", "반복 패턴 없음 (처음 접수한 내용입니다)"
+
+
+def _similar_others_box(result):
+    """다른 학생의 매우 유사한 민원(참고용). 자세히 보기 안에 둔다."""
+    rows = (result.get("history") or {}).get("similar_others", [])
+    if not rows:
+        return ""
+    body = "".join(f'<tr><td>#{x["id"]}</td><td>{x["created_at"]}</td><td>{html.escape(x["student"] or "학생 미상")}</td>'
+                   f'<td>{x["similarity"]:.0%}</td><td>{html.escape(x["snippet"])}</td></tr>' for x in rows)
+    return (f'<div class="box"><h3>다른 학생의 비슷한 민원 <small>(참고)</small></h3><div class="tbl"><table><tr><th>번호</th><th>접수일</th>'
+            f'<th>학생</th><th>유사도</th><th>내용</th></tr>{body}</table></div></div>')
 
 
 def _evidence(result, pdf_href):
-    """매뉴얼 근거를 '민원 유형 근거'와 '처리 절차 근거' 두 묶음으로 나눠 보여 준다."""
+    """매뉴얼 근거: '민원 유형 근거'와 '처리 절차 근거'를 나란히 보여 준다(근거 번호와 매뉴얼 문장만)."""
     groups = {"type": [], "proc": []}
     for e in result["evidence"]:
         groups[EV_GROUP[e["role"]]].append(e)
-    meta = {"type": ("민원 유형 근거", "이 민원이 어떤 유형인지(거부·종결 가능, 특이민원) 판단한 근거입니다."),
-            "proc": ("처리 절차 근거", "이 민원을 어떻게 처리해야 하는지 알려 주는 매뉴얼 절차입니다.")}
+    names = {"type": "민원 유형 근거", "proc": "처리 절차 근거"}
     secs = []
     for g in ("type", "proc"):
-        cards = "".join(
-            f'<article class="ev" id="ev-{e["label"]}" style="--r:{CSS[e["role"]]}"><header><span class="ev-label">{e["label"]}</span>'
-            f'<span class="role">{html.escape(ROLE_NAME[e["role"]])}</span><span class="muted">{html.escape(e["cite"])}</span></header>'
-            f'<p class="why2">연결된 판정: {html.escape(e["reason"])}</p><blockquote>{html.escape(e["text"])}</blockquote></article>'
-            for e in groups[g]) or '<p class="muted" style="margin:0 0 10px">해당하는 근거가 없습니다.</p>'
-        secs.append(f'<section class="ev-group {g}" data-group="{g}"><header><b>{meta[g][0]} ({len(groups[g])})</b>'
-                    f'<span>{meta[g][1]}</span></header><div class="ev-body">{cards}</div></section>')
+        cards = "".join(f'<li id="ev-{e["label"]}"><span class="ev-label">{e["label"]}</span>{html.escape(e["text"])}</li>'
+                        for e in groups[g]) or '<li class="muted">해당하는 근거가 없습니다.</li>'
+        secs.append(f'<section class="ev2 {g}"><h4>{names[g]} <small>{len(groups[g])}</small></h4><ul>{cards}</ul></section>')
     n = len(result["evidence"])
-    tabs = (f'<div class="ev-tabs" role="tablist"><button type="button" class="ev-tab on" data-tab="all">전체<b>{n}</b></button>'
-            f'<button type="button" class="ev-tab" data-tab="type">민원 유형<b>{len(groups["type"])}</b></button>'
-            f'<button type="button" class="ev-tab" data-tab="proc">처리 절차<b>{len(groups["proc"])}</b></button></div>')
-    pdf = (f'<p style="margin:0 0 10px"><a class="btn" href="{html.escape(pdf_href)}" target="_blank">'
-           f'형광펜 표시된 매뉴얼 PDF 열기</a></p>') if pdf_href else ""
-    return f'<h3>매뉴얼 근거 ({n})</h3>{pdf}{tabs}{"".join(secs)}' if n else '<h3>매뉴얼 근거</h3><p class="muted">검색된 근거가 없습니다.</p>'
+    pdf = (f'<a class="cd-btn" href="{html.escape(pdf_href)}" target="_blank">매뉴얼 PDF 열기 (근거 형광펜 표시)</a>') if pdf_href else ""
+    head = f'<h3 style="display:flex;align-items:center;gap:10px">매뉴얼 근거 <small>{n}</small><span style="margin-left:auto">{pdf}</span></h3>'
+    return head + (f'<div class="ev2-wrap">{"".join(secs)}</div>' if n else '<p class="muted">검색된 근거가 없습니다.</p>')
 
 
-def _homeroom_box(result, footer=""):
-    """담당에 담임 교사가 들어가는 민원: 담임 교사에게 전달할 요약과 필요한 행동, 복사용 전달문."""
+SOFT_TAG = {"llm": "AI 순화", "rules": "거친 표현 가림", "none": "원문과 같음"}
+URG_COLOR = {"낮음": "var(--green)", "보통": "var(--blue)", "높음": "var(--amber)", "긴급": "var(--red)"}
+
+
+def _content_card(result):
+    """민원 내용: 순화문을 크게, 원문은 접힌 '원문 보기' 안에."""
+    soft = result.get("text_soft") or result["text_masked"]
+    tag = SOFT_TAG.get(result.get("text_soft_method", "none"), "")
+    return (f'<section class="cd-card o2"><div class="cd-label">민원 내용 <span class="cd-tag">{tag}</span></div>'
+            f'<p class="cd-text">{html.escape(soft)}</p>'
+            f'<details class="cd-orig"><summary>원문 보기 (폭언·욕설이 포함될 수 있습니다)</summary><pre>{_marked_text(result)}</pre></details></section>')
+
+
+def _reply_card(result):
+    note = (result.get("reply_staff_note") or "").strip()
+    finds = [f["text"] for f in (result.get("review") or {}).get("findings", [])]
+    body = (f"<p>{html.escape(note)}</p>" if note else "") + "".join(f'<p class="cd-find">· {html.escape(t)}</p>' for t in finds)
+    note_card = (f'<section class="cd-card cd-note o3"><div class="cd-label">담당자 참고</div>{body}</section>' if body else "")
+    return note_card + (f'<section class="cd-card o3"><div class="cd-label">답변 초안'
+            f'<button type="button" class="cd-btn cd-act" data-copy="reply-text">복사</button></div>'
+            f'{_schedule_note(result.get("schedule"))}<pre id="reply-text" class="cd-reply">{html.escape(result["reply_draft"])}</pre></section>')
+
+
+def _review_box(result):
+    """검토 기록(접힌 참고 자료 안): 검토 루프가 몇 바퀴 돌며 무엇을 점검·보강했는지."""
+    rv = result.get("review")
+    if not rv or not rv.get("rounds"):
+        return ""
+    rows = []
+    for r in rv["rounds"]:
+        bits = [f'근거 점검 {r["checked"]}건 중 약한 것 {r["weak"]}건']
+        if r.get("history_findings"):
+            bits.append(f'이력 점검에서 확인할 점 {r["history_findings"]}건')
+        if r.get("queries"):
+            bits.append("재검색어: " + " / ".join(r["queries"]))
+        if r.get("added"):
+            bits.append("추가된 근거: " + ", ".join(r["added"]))
+        if r.get("note"):
+            bits.append(r["note"])
+        rows.append(f'<li><b>{r["round"]}바퀴</b> {html.escape(" · ".join(bits))}</li>')
+    how = "LLM이 재검색어를 제안" if rv.get("llm_used") else "규칙으로 재검색어를 만듦(LLM 없음)"
+    return (f'<div class="box"><h3>검토 기록 <small>(최대 {rv["max_rounds"]}바퀴 · {how})</small></h3>'
+            f'<ol class="cd-check">{"".join(rows)}</ol></div>')
+
+
+def _facts_card(result, deadline_note):
+    route, urg = result["route"], result["urgency"]
+    review = '<div class="cd-review">자동 판정이 확실하지 않아 사람이 확인해야 합니다</div>' if result["needs_human_review"] else ""
+    rows = [("긴급도", f'<span class="cd-dot" style="--k:{URG_COLOR.get(urg, "var(--muted)")}"></span>{html.escape(urg)}'),
+            ("담당 부서", html.escape(result["department"])), ("처리 담당", html.escape(result["handler"])),
+            ("처리 기한", html.escape(result["deadline"]) + (f'<span class="cd-due">{deadline_note}</span>' if deadline_note else ""))]
+    dl = "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows)
+    return (f'<section class="cd-card cd-facts o1" style="--c:{ROUTE_COLOR[route]}"><div class="cd-route">{ROUTE_SHORT[route]}</div>'
+            f'{review}<dl class="cd-dl">{dl}</dl></section>')
+
+
+def _history_card(result):
+    """과거 이력: 반복 패턴 한 줄 + 같은 학생의 이전 민원(최근 4건) + 경고."""
+    h = result.get("history") or {}
+    kind, pattern = _pattern_line(result)
+    icon, color = {"warn": ("!", "var(--red)"), "note": ("2", "var(--amber)")}.get(kind, ("✓", "var(--green)"))
+    a = h.get("student")
+    sub = (f'{html.escape(a["name"])}({html.escape(a["class_no"])}) 학생의 이전 민원 {a["total"]}건 · 악성 의심 {a["escalated"]}건' if a else
+           (f'{html.escape(result["student"])} 학생의 이전 민원 없음' if result.get("student") else "학생 정보가 없어 학생 기준 이력은 보지 않았습니다"))
+    items = "".join(f'<li>{html.escape(x["snippet"])}<div class="m">#{x["id"]} · {x["created_at"][:10]} · '
+                    f'{html.escape(ROUTE_SHORT.get(x["route"], x["route"]))}</div></li>' for x in h.get("same_student", [])[:4])
+    flags = []
+    if h.get("recent_closed"):
+        rc = h["recent_closed"]
+        flags.append(f'종결한 민원(#{rc["id"]}) 직후 다시 연락함')
+    if h.get("prior_malicious"):
+        flags.append(f'과거 악성 의심 민원 {h["prior_malicious"]}건')
+    return (f'<section class="cd-card o5"><div class="cd-label">과거 이력</div>'
+            f'<div class="cd-pattern"><i style="--k:{color}">{icon}</i><span>{html.escape(pattern)}</span></div>'
+            f'<p class="cd-sub">{sub}</p>{"".join(f"<div class=cd-flag>{html.escape(f)}</div>" for f in flags)}'
+            f'{f"<ul class=cd-list>{items}</ul>" if items else ""}</section>')
+
+
+def _transfer_card(result, href):
+    """상위기관 이첩: 해당하는 기준을 번호 대신 요약 문구와 근거로 보여 주고, 보고서(.hwpx)를 내려받는다."""
+    from .transfer import checklist
+    cl = checklist(result)
+    chosen = [c for c in cl if c["state"] in ("해당", "해당 가능")]
+    todo = [c["short"] for c in cl if c["state"] == "확인 필요"]
+    items = "".join(f'<li><b>{html.escape(c["short"])}<em>{"해당" if c["state"] == "해당" else "해당 가능"}</em></b>'
+                    f'<span>{html.escape(c["reasons"][0])}</span></li>' for c in chosen)
+    body = (f'<ul class="cd-crit">{items}</ul>' if chosen else
+            '<p class="cd-sub" style="margin:8px 0 14px">자동 판단으로는 해당하는 이첩 기준이 없습니다. 이첩이 필요하면 보고서에 사유를 직접 적어 주세요.</p>')
+    check = (f'<div class="cd-sub" style="margin:0 0 4px">학교 기록으로 확인할 사항</div>'
+             f'<ul class="cd-check">{"".join(f"<li>{html.escape(t)}</li>" for t in todo)}</ul>') if todo else ""
+    link = (f'<a class="cd-btn danger wide" href="{html.escape(href)}">이첩 보고서 내려받기 (.hwpx)</a>' if href else
+            '<p class="cd-sub">저장된 민원의 상세 화면에서 보고서를 내려받을 수 있습니다.</p>')
+    return (f'<section class="cd-card cd-esc o4"><div class="cd-label">상위기관 이첩</div>'
+            f'<h4>교육(지원)청 이첩을 검토하세요</h4>{body}{check}{link}</section>')
+
+
+def _homeroom_card(result, footer):
+    """담임 교사 전달(해당 민원만): 받는 사람, 전달문 복사, 전달함 표시. 내용은 접어 둔다."""
     h = result.get("homeroom")
     if not h:
         return ""
-    acts = "".join(f'<li>{html.escape(a["text"])}{_tags(a.get("evidence"))}</li>' for a in h["actions"])
-    return (f'<div class="box homeroom"><h2>담임 교사 전달 <small>({html.escape(h["to"])} · {html.escape(h["student"])})</small></h2>'
-            f'<p class="hr-sum"><b>민원 요약</b> {html.escape(h["summary"])}</p>'
-            f'<div class="sec-title">필요한 행동</div><ol class="todo" style="margin:0 0 4px;padding-left:22px">{acts}</ol>'
-            f'<div class="hr-act"><button type="button" class="btn" data-copy="hr-msg">전달문 복사</button>{footer}</div>'
-            f'<pre class="hr-msg" id="hr-msg">{html.escape(h["message"])}</pre></div>')
+    acts = "".join(f'<li>{html.escape(a["text"])}</li>' for a in h["actions"])
+    return (f'<section class="cd-card o7"><div class="cd-label">담임 교사 전달'
+            f'<button type="button" class="cd-btn cd-act" data-copy="hr-msg">전달문 복사</button></div>'
+            f'<div style="font-weight:700">{html.escape(h["to"])}</div><p class="cd-sub">{html.escape(h["summary"])}</p>'
+            f'<details class="cd-orig"><summary>요청할 행동·전달문 보기</summary><ol class="cd-check" style="margin-top:8px">{acts}</ol>'
+            f'<pre id="hr-msg">{html.escape(h["message"])}</pre></details><div style="margin-top:12px">{footer}</div></section>')
 
 
-def render_body(result, pdf_href=None, homeroom_footer="", transfer_href=""):
-    """분류 결과 화면: 요약 -> 지금 할 일 -> (원문·사유·이력·초안 | 매뉴얼 근거). 웹 페이지와 report.html이 함께 쓴다."""
-    route, color = result["route"], ROUTE_COLOR[result["route"]]
-    urg = result["urgency"]
-    tiles = [("긴급도", f'<span class="pill {URGENCY_CLASS.get(urg, "mid")}">{html.escape(urg)}</span>'),
-             ("민원 대상 학생", html.escape(result.get("student") or "학생 미상")),
-             ("분류 (담당 부서)", html.escape(result["department"])), ("처리 담당", html.escape(result["handler"])),
-             ("처리 기한", html.escape(result["deadline"])), ("동일·유사 민원", f"{result['repeat_count']}회째"),
-             ("민원 번호", f"#{result['complaint_id']}" if result.get("complaint_id") else "저장 안 함")]
-    dl = "".join(f'<div class="tile"><dt>{k}</dt><dd>{v}</dd></div>' for k, v in tiles)
-    review = ('<div class="banner"><b>사람 확인 필요</b> · 자동 판정이 확실하지 않거나 상위 조치가 필요한 건입니다. '
-              '아래 사유와 매뉴얼 근거를 확인한 뒤 처리하세요.</div>') if result["needs_human_review"] else ""
+def render_body(result, pdf_href=None, homeroom_footer="", transfer_href="", deadline_note="", status_html="", timeline_html=""):
+    """분류 결과 화면. 왼쪽: 민원 내용 → 답변 초안 → 참고 자료(접힘). 오른쪽: 분류·긴급도·담당·기한 → 처리 상태 → 이첩 → 과거 이력 → 담임 전달.
+    좁은 화면에서는 '분류 요약 → 민원 내용 → 답변 초안 → 이첩 → 과거 이력 …' 순서로 한 줄에 쌓인다. 웹 페이지와 report.html이 함께 쓴다."""
     notes = "".join(f'<span class="chip note">{html.escape(n)}</span>' for n in result["notes"])
-    copy = lambda i: f'<button type="button" class="btn" data-copy="{i}">복사</button>'  # noqa: E731
-    transfer = _transfer_box(result, transfer_href) if result["route"] == "ESCALATE" or transfer_href else ""
-    return f"""
-<section class="summary" id="result" style="--c:{color}"><div class="sum-head"><span class="badge">{ROUTE_SHORT[route]}</span>
-<span class="sum-label">{html.escape(result['route_label'])}</span></div>{review}
-<dl class="tiles" style="margin-bottom:0">{dl}</dl></section>
-<div class="box"><h2>지금 할 일 <small>(해 둔 항목은 체크하세요)</small></h2>{_todo(result)}</div>
-{_homeroom_box(result, homeroom_footer)}
-<div class="cols"><div class="col">
-{_original_box(result)}
-<div class="box"><h3>분류 사유</h3>
-<div class="rrow"><div class="sec-title">거부·종결 가능 사유</div>{_chips(result['reject'], 'reject')}</div>
-<div class="rrow"><div class="sec-title">특이민원 유형</div>{_chips(result['malicious'], 'mal', True)}</div>
-{f'<div class="rrow"><div class="sec-title">참고 (맥락 확인 필요)</div>{notes}</div>' if notes else ''}
-<div class="foot">칩에 마우스를 올리면 감지된 표현이 보이고, E1·E2 같은 번호를 누르면 오른쪽 매뉴얼 근거로 이동합니다.</div></div>
-{_history_box(result)}
-<details class="drawer"{' open' if (result.get('schedule') or {}).get('status') == 'ok' else ''}><summary>답변·경고 초안</summary><div class="drawer-body">{_schedule_note(result.get('schedule'))}{copy("reply-text")}
-<pre id="reply-text" style="margin-top:8px">{html.escape(result['reply_draft'])}</pre></div></details>
-{transfer}
-<p class="foot">※ 자동 판정은 후보 제시용이며 최종 판단은 학교장(민원대응팀)이 한다.</p></div>
-<div class="col side"><div class="sticky">{_evidence(result, pdf_href)}</div></div></div>"""
+    transfer = _transfer_card(result, transfer_href) if result["route"] == "ESCALATE" or transfer_href else ""
+    more = (f'<details class="cd-more o9"><summary>참고 자료<small>지금 할 일 · 분류 사유 · 매뉴얼 근거 · 검토 기록'
+            f'{" · 처리 경과" if timeline_html else ""}</small></summary>'
+            f'<div class="box"><h3>지금 할 일 <small>(해 둔 항목은 체크하세요)</small></h3>{_todo(result)}</div>'
+            f'<div class="box"><h3>분류 사유</h3>'
+            f'<div class="rrow"><div class="sec-title">거부·종결 가능 사유</div>{_chips(result["reject"], "reject", tips=_tips(result))}</div>'
+            f'<div class="rrow"><div class="sec-title">특이민원 유형</div>{_chips(result["malicious"], "mal", True, _tips(result))}</div>'
+            f'{f"""<div class="rrow"><div class="sec-title">참고 (맥락 확인 필요)</div>{notes}</div>""" if notes else ""}</div>'
+            f'{_similar_others_box(result)}{_review_box(result)}{timeline_html}'
+            f'<div class="box">{_evidence(result, pdf_href)}</div>'
+            f'<p class="cd-foot">자동 판정은 후보 제시용이며 최종 판단은 학교장(민원대응팀)이 합니다.</p></details>')
+    return (f'<div class="cd"><div class="cd-main">{_content_card(result)}{_reply_card(result)}{more}</div>'
+            f'<aside class="cd-side">{_facts_card(result, deadline_note)}{status_html}{transfer}'
+            f'{_history_card(result)}{_homeroom_card(result, homeroom_footer)}</aside></div>')
 
 
 def render_page(result, pdf_href=None):

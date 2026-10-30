@@ -9,7 +9,7 @@ __pycache__/
 data/*.sqlite
 data/*.db
 data/*.bak-*
-out/web/
+out/
 
 # Claude Code 로컬 전용 설정 (공유/커밋하지 않음)
 .claude/settings.local.json

@@ -10,10 +10,14 @@
 python -m venv .venv
 .venv\Scripts\activate          # macOS/Linux는 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # LLM·DB 설정 (모두 선택)
+cp .env.example .env            # LLM·DB·학사일정 설정 (모두 선택)
 python -m agent.complaint.web --llm none
 # 브라우저에서 http://127.0.0.1:8000
+python samples/seed_demo_db.py --reset   # (선택, 서버를 끈 뒤) 예시 민원으로 DB 채우기
 ```
+
+주요 기능: 민원 분류(부서·긴급도·기한)와 매뉴얼 근거, 처리 상태 기록, 담임 교사 전달, 악성 의심 이첩 보고서(.hwpx), 민원 원문 순화,
+악성 반복 판정(유사도 기반), 검토 루프(이력 점검·근거 보강), 시즌 키워드 분석과 가정통신문 계획, 학사일정 답변 초안.
 
 ## 테스트
 ```bash

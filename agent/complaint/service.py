@@ -29,6 +29,7 @@ class ComplaintService:
         self.retr = Retriever(self.index, embed)
         self.store = Store(db or s.database_url, s.history_window_days, s.recontact_hours)
         self.calendar = SchoolCalendar.from_settings(s)
+        self.sim_threshold, self.sim_samples = s.repeat_sim_threshold, s.repeat_sim_samples
         self.school_name = s.school_name
         self.transfer_template = s.transfer_template
         self._lock = threading.Lock()      # sqlite 이력 갱신을 요청 간에 직렬화
@@ -41,7 +42,7 @@ class ComplaintService:
         with self._lock:
             return run(text, stu, self.retr, self.store, self.llm,
                        received_at=received_at or None, call_minutes=call_minutes, save=save,
-                       calendar=self.calendar)
+                       calendar=self.calendar, sim_threshold=self.sim_threshold, sim_samples=self.sim_samples)
 
     def transfer_report(self, complaint, path):
         """저장된 민원(store.get_complaint 결과)의 이첩 보고서를 한글 파일(.hwpx)로 쓴다. 처리 경과가 최신으로 들어간다."""
@@ -52,8 +53,14 @@ class ComplaintService:
         t = build_transfer(result, complaint, self.school_name, self.store.get_texts(ids))
         return to_hwpx(t, path, self.transfer_template)
 
+    def save_pdf(self, used, out_dir):
+        """근거 형광펜 PDF만 out_dir에 쓴다(웹용). 화면은 DB에서 그리므로 html·json은 만들지 않는다."""
+        if used:
+            os.makedirs(out_dir, exist_ok=True)
+            annotate(self.pdf, used, out_dir)
+
     def save_outputs(self, result, used, out_dir):
-        """근거 형광펜 PDF, result.json, report.html을 out_dir에 쓴다."""
+        """터미널(CLI)용: 근거 형광펜 PDF, result.json, report.html을 out_dir에 쓴다."""
         os.makedirs(out_dir, exist_ok=True)
         if used:
             annotate(self.pdf, used, out_dir)

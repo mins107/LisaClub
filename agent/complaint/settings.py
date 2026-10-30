@@ -19,6 +19,8 @@ class Settings:
     database_url: str     # SQLAlchemy 접속 주소 또는 SQLite 파일 경로
     history_window_days: int    # 반복·악성 이력을 세는 기간(일)
     recontact_hours: int        # 종결 후 '바로' 연락이 온 것으로 보는 시간
+    repeat_sim_threshold: float  # 반복민원으로 볼 유사도 임계값(0~1)
+    repeat_sim_samples: int      # LLM에게 유사도를 묻는 횟수(중앙값 사용)
     neis_api_key: str           # 나이스 학사일정 API 인증키(없으면 학사일정 직접 답변을 만들지 않음)
     neis_office_code: str       # 시도교육청코드 (ATPT_OFCDC_SC_CODE)
     neis_school_code: str       # 표준학교코드 (SD_SCHUL_CODE)
@@ -41,6 +43,8 @@ def load_settings() -> Settings:
         database_url=os.environ.get("DATABASE_URL", "data/complaints.sqlite"),
         history_window_days=int(os.environ.get("HISTORY_WINDOW_DAYS", "180")),
         recontact_hours=int(os.environ.get("RECONTACT_HOURS", "24")),
+        repeat_sim_threshold=float(os.environ.get("REPEAT_SIM_THRESHOLD", "0.8")),
+        repeat_sim_samples=int(os.environ.get("REPEAT_SIM_SAMPLES", "3")),
         neis_api_key=os.environ.get("NEIS_API_KEY", ""),
         neis_office_code=_code("NEIS_OFFICE_CODE"),
         neis_school_code=_code("NEIS_SCHOOL_CODE"),

@@ -348,12 +348,15 @@ def test_web_dashboard_and_progress(tmp_path):
     post = lambda p, d: urllib.request.urlopen(base + p, urllib.parse.urlencode(d).encode()).read().decode()  # noqa: E731
     try:
         main = get("/")                                                    # 메인 화면: 대시보드 + 새 민원 입력
-        assert "전체 민원" in main and "민원 목록" in main and "＋ 새 민원 입력" in main and "분류하기" in main
+        assert "전체 민원" not in main and "민원 목록" in main and "＋ 새 민원 입력" in main and "분류하기" in main and "진행 중" in main
+        assert "<dialog" in main and "최근 14일" not in main and "부서별 민원 현황" not in main          # 입력은 창으로, 그래프는 분석 탭으로
+        ana = get("/analysis")
+        assert "부서별 민원 현황" in ana and "시즌별 민원 키워드" in ana and "처리 상태" in ana and "최근 14일" not in ana
         assert "조건에 맞는 민원이 없습니다" in main
 
         text = "수행평가 점수가 이해되지 않습니다. 채점 기준을 확인하고 싶습니다. 왜 이 점수인지 이유를 알려 주세요."
         page = post("/classify", {"text": text, "student": "홍길동", "class_no": "305"})     # 저장 후 상세 화면으로 이동
-        assert "민원 #1" in page and "분류가 끝나 DB에 저장되었습니다" in page and "처리 경과" in page
+        assert "민원 #1" in page and "분류가 끝나 저장되었습니다" in page and "처리 경과" in page
         assert "담임 교사 전달" in page and "전달함으로 표시" in page and "3학년 5반 담임 교사" in page
         assert "evidence_highlighted.pdf" in page
 
@@ -384,12 +387,37 @@ def test_web_dashboard_and_progress(tmp_path):
 
 
 @needs_pdf
-def test_repeat_closed_then_escalate():
+def test_benign_repeat_is_closable_but_not_malicious():
     idx = build_index(PDF)
     retr, store, llm = Retriever(idx), Store(), NullLLM()
     t = "수행평가 점수 채점 기준을 알려 주세요"
-    routes = [run(t, make_student("사아", "109"), retr, store, llm)[0]["route"] for _ in range(5)]
-    assert routes[:2] == ["HANDLE", "HANDLE"] and routes[2] == "REJECTABLE" and routes[4] == "ESCALATE"
+    res = [run(t, make_student("사아", "109"), retr, store, llm)[0] for _ in range(5)]
+    assert [r["route"] for r in res[:3]] == ["HANDLE", "HANDLE", "REJECTABLE"]
+    assert all(r["route"] != "ESCALATE" and r["malicious_repeat"]["count"] == 1 for r in res)   # 단순 반복은 악성으로 세지 않는다
+
+
+@needs_pdf
+def test_malicious_repeat_counts_only_open_similar_malicious_trait(monkeypatch):
+    from agent.complaint import pipeline, similarity
+    from agent.complaint.store import malicious_trait
+    assert malicious_trait([{"severity": 3, "confident": True}]) and not malicious_trait([{"severity": 2}])
+    assert not malicious_trait([{"severity": 4, "confident": False}])                       # 확신 낮은 규칙은 제외
+    idx = build_index(PDF)
+    retr, store, llm = Retriever(idx), Store(), NullLLM()
+    stu = make_student("아자", "209")
+    sims = {"v": 0.9}
+    monkeypatch.setattr(similarity, "score", lambda *_a, **_k: (sims["v"], "llm"))
+    ids = [run("칼 들고 찾아가서 가만 안 둔다", stu, retr, store, llm)[0]["complaint_id"] for _ in range(2)]
+    benign = "수행평가 점수 채점 기준을 알려 주세요"
+    r = run(benign, stu, retr, store, llm, save=False)[0]
+    assert r["malicious_repeat"]["count"] == 3 and r["route"] == "ESCALATE"               # 유사한 악성 특성 미해결 2건 + 이번
+    store.set_status(ids[0], "완료")
+    r = run(benign, stu, retr, store, llm, save=False)[0]
+    assert r["malicious_repeat"]["count"] == 2 and r["route"] != "ESCALATE"               # 해결된 민원은 제외
+    sims["v"] = 0.5
+    r = run(benign, stu, retr, store, llm, save=False)[0]
+    assert r["malicious_repeat"]["count"] == 1                                             # 임계값 미만이면 제외
+    assert similarity.lexical("수행평가 점수 알려 주세요", "수행평가 점수 알려 주세요") == 1.0
 
 
 class FakeCalendar:
@@ -447,7 +475,8 @@ def test_pipeline_uses_schedule_reply_only_for_handle():
     cal = FakeCalendar([_ev("20261104", "현장체험학습")])
     res, _ = run("체험학습 일정이 언제인가요?", None, retr, store, llm, save=False, calendar=cal)
     assert res["route"] == "HANDLE" and res["schedule"]["status"] == "ok"
-    assert res["reply_draft"] == res["schedule"]["reply"] and "현장체험학습" in res["reply_draft"]
+    assert "현장체험학습" in res["reply_draft"] and "· " in res["reply_draft"] and "- 20" not in res["reply_draft"]   # 일정 답변도 기호 없이
+    assert res["reply_staff_note"] == ""
     res, _ = run("체험학습 일정이 언제인가요?", None, retr, store, llm, save=False, calendar=SC_NONE())
     assert res["schedule"]["status"] == "not_configured" and "현장체험학습" not in res["reply_draft"]
     res, _ = run("칼 들고 찾아가서 가만 안 둔다. 체험학습 일정이 언제인가요?", None, retr, store, llm, save=False, calendar=cal)
@@ -513,7 +542,7 @@ def test_department_stats_insights_and_dashboard(tmp_path):
     from datetime import timedelta
     from agent.complaint import insights as IN
     from agent.complaint import store as st
-    from agent.complaint.dashboard import render_dashboard
+    from agent.complaint.dashboard import render_analysis
     s = Store()
     res = _fake_result("수행평가 점수 문의")
     res.update(department="교수학습지원부", deadline="7일 이내", department_keywords=["수행평가"])
@@ -526,7 +555,7 @@ def test_department_stats_insights_and_dashboard(tmp_path):
     assert d["total"] == 4 and d["done"] == 1 and d["open"] == 3 and d["overdue"] == 2 and d["top_topics"] == ["수행평가"]
     ins = IN.department_insights(stats["departments"], stats["total"])
     assert ins and ins[0]["dept"] == "교수학습지원부" and {"overdue", "backlog"} <= set(ins[0]["flags"])
-    page = render_dashboard(stats, [], 0, {}, 1, 20, "")
+    page = render_analysis(stats)
     assert "부서별 민원 현황" in page and "개선을 검토할 부서" in page and "교수학습지원부" in page and "기한 초과 2건" in page
     assert IN.department_insights(Store().stats()["departments"], 0) == []
 
@@ -648,7 +677,7 @@ def test_pipeline_mentions_notice_in_season_and_web_flow(tmp_path):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
-        page = urllib.request.urlopen(base + "/").read().decode("utf-8")
+        page = urllib.request.urlopen(base + "/analysis").read().decode("utf-8")
         assert "시즌별 민원 키워드와 가정통신문" in page and "3개월 이상" in page          # 데이터가 없으면 안내만
         notices = _json.loads(urllib.request.urlopen(base + "/api/notices").read())
         assert any(n["keyword"] == "기말고사" and n["state"] in ("due", "sent", "waiting") for n in notices)
@@ -682,7 +711,7 @@ def test_transfer_checklist_selects_matching_criteria():
     cl = {c["no"]: c for c in TR.checklist(rep)}
     assert cl[1]["state"] == "해당" and "#3" in cl[1]["reasons"][0] and cl[3]["state"] == "해당 없음" and cl[5]["state"] == "해당 가능"
     t = TR.build_transfer(rep)
-    assert t["chosen"] == [1, 5] and "1번, 5번" in t["reason_lines"][0] and any("2026-08-01" in l for l in t["history_lines"])
+    assert t["chosen"] == [1, 5] and "같은 민원을 3회 이상 반복" in t["reason_lines"][1] and "교육활동에 심각한 지장" in t["reason_lines"][2] and any("2026-08-01" in l for l in t["history_lines"])
     assert any("법적 조치" in x for x in TR.build_transfer(_esc_result())["request_lines"])         # 기준 3번 -> 법적 조치 협의 요청
     sent = TR.checklist(_esc_result(malicious=[{"key": "threat", "label": "협박", "severity": 4, "matched": "가만 안"}]))[2]["reasons"][0]
     assert "'안 그러면 가만 안 둔다.'" in sent                                       # 감지된 말(가만 안)이 아니라 그 문장 전체
@@ -713,7 +742,7 @@ def test_transfer_hwpx_fills_the_template_file(tmp_path):
     text = _hwpx_text(f)
     for want in ("가락고등학교", "■ 교무/학사", "□ 기타", "홍길동", "3학년 5반(305)", "2026. 8. 1.",
                  "점수 이의 신청합니다 원문 그대로", "점수를 올려라 씨X 가만 안 둔다",       # 이번 민원·이전 민원 모두 원문 그대로
-                 "이첩 사유", "1번, 3번"):
+                 "이첩 사유", "처벌이 가능할 정도의 중대한 위법 행위"):
         assert want in text, want
     assert "(작성예시)" not in text and "쉬는시간 중 담임교사가" not in text and "2025. 9. 30." not in text   # 서식의 예시 문구는 지운다
     assert "교육(지원)청별 여건에 따라" in text or "서식" in text                       # 서식의 나머지 문구는 그대로
@@ -762,7 +791,8 @@ def test_web_transfer_report_download(tmp_path):
         page = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}").read().decode("utf-8")
         from agent.complaint.rules import DEPT_DESC
         assert DEPT_DESC.get(res["department"], "(없음)") not in page and "→ " + res["department"] + ": " not in page                           # 분류(담당 부서) 아래 회색 설명은 보이지 않는다
-        assert "상위기관 이첩 검토" in page and f"/complaints/{res['complaint_id']}/transfer.hwpx" in page and "이첩 사유" in page
+        assert "상위기관 이첩" in page and "처벌이 가능할 정도의 중대한 위법 행위" in page and "■ 해당" not in page and "1번" not in page
+        assert f"/complaints/{res['complaint_id']}/transfer.hwpx" in page and "이첩 보고서 내려받기" in page
         r = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}/transfer.hwpx")
         data = r.read()
         assert data[:2] == b"PK" and "hwpx" in r.headers["Content-Type"] and ".hwpx" in r.headers["Content-Disposition"]
@@ -821,7 +851,7 @@ def test_screens_show_soft_text_first_and_original_on_demand(tmp_path):
         assert "[부적절한 표현]" in head and "가만 안" not in head           # 원문 보기 위(기본 화면)에는 순화문만
         assert "가만 안" in tail and "<details" in page                      # 원문은 [원문 보기] 안에 있다
         home = urllib.request.urlopen(base + "/").read().decode("utf-8")
-        lst = home.split("<h2>민원 목록</h2>")[1]                                   # (위쪽 입력 예시 문구는 제외)
+        lst = home.split("<h2>민원 목록</h2>")[1].split("<dialog")[0]                                   # (위쪽 입력 예시 문구는 제외)
         assert "가만 안" not in lst and "[부적절한 표현]" in lst            # 목록 내용 요약도 순화문
     finally:
         srv.shutdown()
@@ -831,3 +861,118 @@ def test_screens_show_soft_text_first_and_original_on_demand(tmp_path):
     cid = s.save(legacy, None, None, None, False)
     assert "가만 안" not in s.get_complaint(cid)["result"]["text_soft"]
     assert "가만 안" not in s.list_complaints()[0][0]["text"]
+
+
+@needs_pdf
+def test_detail_page_shows_only_the_essentials_first(tmp_path):
+    from agent.complaint import web
+    from agent.complaint.service import ComplaintService
+    from http.server import ThreadingHTTPServer
+    import threading, urllib.request
+    svc = ComplaintService(PDF, ":memory:", "none")
+    svc.calendar = None
+    for text in ("수행평가 점수 이의 신청을 하고 싶습니다. 이유를 알려 주세요.", "수행평가 점수 이의 신청을 다시 하고 싶습니다. 이유를 알려 주세요.",
+                 "수행평가 점수 이의 신청을 또 하고 싶습니다. 이유를 알려 주세요."):
+        res, _ = svc.classify(text, "홍길동", "305")
+    web.Handler.service, web.Handler.out_root = svc, str(tmp_path)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        page = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}").read().decode("utf-8")
+        main = page.split('<div class="cd-main">')[1]
+        content, _, rest = main.partition('<details class="cd-more')
+        more, _, side = rest.partition('<aside class="cd-side">')
+        for want in ("민원 내용", "답변 초안", "원문 보기"):
+            assert want in content, want                                           # 왼쪽: 민원 내용과 답변 초안
+        for want in ("<dt>긴급도", "<dt>담당 부서", "<dt>처리 담당", "<dt>처리 기한", "과거 이력", "반복 패턴", "처리 상태"):
+            assert want in side, want                                              # 오른쪽: 처리에 필요한 정보
+        for hidden in ("<h3>지금 할 일", "<h3>분류 사유", ">매뉴얼 근거 <small>", "<h3>처리 경과"):
+            assert hidden in more and hidden not in content + side, hidden          # 나머지는 접힌 '참고 자료' 안에만
+        assert "<details class=\"cd-more o9\">" in page                           # 기본으로 접혀 있다
+        home = urllib.request.urlopen(base + "/").read().decode("utf-8")
+        form = home.split("접수된 민원 내용")[1].split("분류하기")[0]
+        assert form.index("<textarea") < form.index("추가 정보") < form.index('name="student"') < form.index('name="call_minutes"')
+        assert "<details class=\"drawer\" open>" not in form                      # 추가 정보는 기본으로 접혀 있다
+    finally:
+        srv.shutdown()
+
+
+
+def test_reply_draft_is_plain_and_staff_note_is_separate():
+    import json as _json
+    from agent.complaint.pipeline import _draft, _plain
+
+    class U:
+        def __init__(self, label):
+            self.label, self.ev = label, type("E", (), {"text": "매뉴얼 문장"})()
+
+    used = [U("E1"), U("E2")]
+    assert _plain("## 안내\n**안녕하세요** ++중요++ 입니다 [E1]\n- 첫째\n> 인용\n근거: E1, E2") == "안내\n안녕하세요 중요 입니다\n· 첫째\n인용"
+    ok = _FakeLLM(_json.dumps({"reply": "**안녕하세요.** 확인 후 안내드리겠습니다.\n근거: E1", "staff_note": "보내기 전 **채점표**를 확인하세요.",
+                               "evidence": ["E1"]}, ensure_ascii=False))
+    reply, note, ev = _draft(ok, "민원", "HANDLE", used, "")
+    assert reply == "안녕하세요. 확인 후 안내드리겠습니다." and note == "보내기 전 채점표를 확인하세요." and ev == ["E1"]
+    bad = _FakeLLM(_json.dumps({"reply": "안내", "staff_note": "", "evidence": ["E9"]}))
+    reply, note, ev = _draft(bad, "민원", "HANDLE", used, "")                       # 없는 근거 번호 -> 기본 문구
+    assert reply.startswith("안녕하세요") and "근거" not in reply and note == "" and ev == ["E1", "E2"]
+    reply, note, _ = _draft(NullLLM(), "민원", "REJECTABLE", used, "")
+    assert "근거:" not in reply and note == ""
+
+
+@needs_pdf
+def test_evidence_tooltips_and_simple_manual_section():
+    import html as _html
+    from agent.complaint.highlight import render_body
+    idx = build_index(PDF)
+    res, _ = run("칼 들고 찾아가서 가만 안 둔다", None, Retriever(idx), Store(), NullLLM(), save=False)
+    res["reply_staff_note"] = "경고 문구라 관리자 확인 후 발송하세요."
+    page = render_body(res, pdf_href="x.pdf")
+    first = res["evidence"][0]
+    assert f'data-tip="{_html.escape(first["text"], quote=True)}"' in page                  # 근거 번호 말풍선 = 매뉴얼 문장
+    assert '<a class="tag"' not in page and "data-tab" not in page                         # 누르는 링크·탭 버튼은 없다
+    assert "연결된 판정" not in page and first["cite"] not in page                          # 판정·쪽 번호 표시는 없앴다
+    assert "민원 유형 근거" in page and "처리 절차 근거" in page and "매뉴얼 PDF 열기" in page
+    assert page.index("담당자 참고") < page.index("답변 초안")                              # 담당자 참고는 초안 위 별도 카드
+    res["reply_staff_note"] = ""
+    res["review"] = {**res["review"], "findings": []}
+    assert "담당자 참고" not in render_body(res)
+
+
+def test_review_loop_checks_history_and_boosts_weak_evidence():
+    from agent.complaint import review as RV
+    from agent.complaint.pipeline import _Collector
+
+    class Ev:
+        def __init__(self, i, text):
+            self.id, self.text = i, text
+
+    evs = [Ev(1, "무관한 문장 하나"), Ev(2, "처리 기한 복합민원 7일 이내 단순민원 즉시")]
+
+    class Retr:
+        def search(self, q, k=3):
+            return [(e, 1.0) for e in evs if any(w in e.text for w in q.split())][:k]
+
+    col = _Collector(Retr())
+    col.items.append(type("U", (), {"label": "E1", "ev": evs[0], "role": "procedure", "reason": "처리 기한", "score": 1.0})())
+    col.log.append({"anchor": "처리 기한 복합민원 7일 이내 단순민원 즉시", "role": "procedure", "reason": "처리 기한", "labels": ["E1"]})
+    hits = [{"evidence": ["E1"]}]
+    out = RV.run(NullLLM(), Retr(), col, hits, text="x", route="HANDLE", history={"prior_malicious": 1, "recent_closed": None},
+                 mal_repeat=1, near_items=[], student=None, sim_threshold=0.8)
+    assert out["added_evidence"] == ["E2"] and "E2" in hits[0]["evidence"] and not out["llm_used"]       # LLM 없이 규칙 재검색으로 보강
+    assert out["rounds"][0]["weak"] == 1 and len(out["rounds"]) <= RV.MAX_ROUNDS
+    assert [f["kind"] for f in out["findings"]] == ["history"] and "과거 악성" in out["findings"][0]["text"]   # 근거는 보강돼 evidence 지적 없음
+    f = RV.history_findings(route="HANDLE", history={}, mal_repeat=2, near_items=[{}], student=None, sim_threshold=0.8)
+    assert any("임계값" in t for t in f) and any("2회" in t for t in f)
+    assert RV.history_findings(route="ESCALATE", history={}, mal_repeat=1, near_items=[], student=None, sim_threshold=0.8)    # 학생 미상 악성 의심
+
+
+@needs_pdf
+def test_pipeline_attaches_review_and_flags_for_human():
+    idx = build_index(PDF)
+    res, _ = run("수행평가 점수 채점 기준을 알려 주세요", make_student("검토", "101"), Retriever(idx), Store(), NullLLM(), save=False)
+    assert res["review"]["max_rounds"] == 3 and res["review"]["rounds"] and not res["review"]["findings"]
+    res, _ = run("칼 들고 찾아가서 가만 안 둔다", None, Retriever(idx), Store(), NullLLM(), save=False)
+    assert any(f["kind"] == "history" for f in res["review"]["findings"]) and res["needs_human_review"]
+    from agent.complaint.highlight import render_body
+    assert "학생 정보가 없어" in render_body(res) and "검토 기록" in render_body(res)

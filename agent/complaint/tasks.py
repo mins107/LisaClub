@@ -30,11 +30,15 @@ def _a(phase, text, reasons, evidence=()):
 
 
 def team_tasks(text, route, deadline, student, ev_assign=(), ev_due=(), ev_guide=(), homeroom=False, schedule=None, dept=None, grade_dept=None):
-    """반환: (먼저 할 일 목록, 마지막에 할 일 목록). 일반 처리·거부 가능 민원에만 만든다."""
+    """반환: (먼저 할 일 목록, 마지막에 할 일 목록). 일반 처리·거부 가능 민원에만 만든다.
+    ev_guide(공식 창구 안내 근거)는 개인 연락처를 묻는 민원에만 있다. 이 사이트가 공식 접수 창구라서 다른 거부 사유에는 창구 안내를 붙이지 않는다."""
     first, last = [], []
     if route == "REJECTABLE":
-        last.append(_a(PHASE_REPLY, "공식 접수 창구(학교 대표번호·온라인 민원 창구)를 안내하고, 종결하면 사유를 통지",
-                       ["공식 창구 외 경로 민원"], ev_guide))
+        if ev_guide:
+            last.append(_a(PHASE_REPLY, "교직원 개인 연락처는 안내할 수 없고 공식 접수 창구(학교 대표번호·온라인 민원 창구)로 문의하도록 안내",
+                           ["교직원 개인 연락처 요구"], ev_guide))
+        else:
+            last.append(_a(PHASE_REPLY, "거부·종결 사유를 민원인에게 통지", ["거부·종결 가능 민원"], []))
         return first, last
     if route != "HANDLE":
         return first, last

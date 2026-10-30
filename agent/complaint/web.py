@@ -1,23 +1,26 @@
 """민원대응팀용 웹 화면. 실행: python -m agent.complaint.web [--port 8000] [--llm auto|on|none]
 
- /                       메인 화면: 민원 DB 대시보드(요약·그래프·목록·조회) + 새 민원 입력
+ /                       메인 화면: 처리할 일 요약 숫자 + 민원 목록(조회 조건). 새 민원 입력은 머리줄 버튼의 창
+ /analysis               분석: 처리 상태·분류, 부서별 민원 현황, 시즌별 민원 키워드와 가정통신문
  /complaints/<번호>       민원 상세: 분류 결과 + 처리 상태·경과 기록 + 담임 교사 전달
  /api/classify           프로그램 연동용 JSON API
 
 외부 의존성 없이 표준 라이브러리 http.server만 쓴다. 기본은 내 컴퓨터(127.0.0.1)에서만 접속된다.
 """
 import argparse
+import glob
 import html
 import json
 import os
 import re
+import shutil
 import uuid
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, parse_qs, urlparse
 
 from .analytics import season_report
-from .dashboard import DASH_CSS, render_dashboard, render_detail, render_season
+from .dashboard import DASH_CSS, render_analysis, render_dashboard, render_detail, render_season
 from .notices import plans_from_report, status_list as notice_status
 from .highlight import PAGE_SCRIPT, STYLE, render_body
 from .service import ComplaintService
@@ -25,8 +28,7 @@ from .service import ComplaintService
 MAX_TEXT = 5000
 PER_PAGE = 20
 CASE_ID = re.compile(r"^(web-\d{8}-\d{6}-[0-9a-f]{4}|complaint-\d+)$")
-FILES = {"report.html": "text/html; charset=utf-8", "result.json": "application/json; charset=utf-8",
-         "evidence_highlighted.pdf": "application/pdf"}
+FILES = {"evidence_highlighted.pdf": "application/pdf"}
 FILTER_KEYS = ("status", "route", "department", "urgency", "homeroom", "overdue", "q")
 
 FORM_CSS = """
@@ -69,39 +71,66 @@ SAMPLES = [("개인 연락처 요청", "선생님 개인 번호 좀 알려주세
            ("폭언·협박", "담임 때문에 우리 애가 학교 가기 싫대요!! 이게 말이 됩니까?? 당장 책임지세요. 이런 무능한 교사는 자격 없어요, 가만 안 둡니다.")]
 
 
-def _layout(main_html):
+NEW_CSS = """
+.topbar .wrap{align-items:center}
+.tabs{display:flex;gap:4px;margin-left:18px} .tabs a{padding:7px 14px;border-radius:9px;color:var(--muted);text-decoration:none;font-weight:700;font-size:.92em}
+.tabs a:hover{background:var(--soft);color:var(--text)} .tabs a.on{background:color-mix(in srgb,var(--primary) 12%,transparent);color:var(--primary)}
+dialog.dlg{border:0;border-radius:18px;padding:0;width:min(640px,calc(100% - 32px));max-height:calc(100vh - 48px);background:var(--card);color:var(--text);
+box-shadow:0 24px 64px rgba(0,0,0,.25)} dialog.dlg::backdrop{background:rgba(15,17,21,.5)}
+dialog.dlg form.box{margin:0;border:0;padding:22px 24px} .dlg-x{position:absolute;top:12px;right:14px;border:0;background:none;color:var(--muted);
+font-size:1.6em;line-height:1;cursor:pointer;padding:4px 8px;border-radius:8px} .dlg-x:hover{background:var(--soft);color:var(--text)}
+@media(max-width:600px){.tabs{margin-left:6px}.tabs a{padding:6px 9px}}
+"""
+
+DIALOG_SCRIPT = """
+(function(){var d=document.getElementById('new-dlg');if(!d)return;
+function open(){if(!d.open)d.showModal();var t=document.getElementById('t');if(t)t.focus()}
+document.querySelectorAll('[data-open-new]').forEach(function(b){b.addEventListener('click',open)});
+document.querySelectorAll('[data-close-new]').forEach(function(b){b.addEventListener('click',function(){d.close()})});
+d.addEventListener('click',function(e){if(e.target===d)d.close()});
+if(d.querySelector('.err')||location.hash==='#new')open();})();
+"""
+
+
+def _layout(main_html, active="list", form_html=None):
+    """모든 화면의 틀: 머리줄(민원 목록·분석 탭, 새 민원 입력 버튼)과 새 민원 입력 창(dialog)."""
+    tabs = "".join(f'<a href="{h}" class="{"on" if k == active else ""}">{n}</a>' for k, h, n in (("list", "/", "민원 목록"), ("analysis", "/analysis", "분석")))
     return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>학교 민원 관리</title><style>{STYLE}{FORM_CSS}{DASH_CSS}</style>'
-            f'<header class="topbar"><div class="wrap"><b>학교 민원 관리</b><span>민원대응팀 · 매뉴얼 근거 기반 자동 분류</span>'
-            f'<div class="nav noprint"><a class="btn" href="/">대시보드</a><a class="btn cta" href="/#new">＋ 새 민원 입력</a></div></div></header>'
-            f'<main class="wrap">{main_html}</main><script>{PAGE_SCRIPT}{FORM_SCRIPT}</script>')
+            f'<title>학교 민원 관리</title><style>{STYLE}{FORM_CSS}{DASH_CSS}{NEW_CSS}</style>'
+            f'<header class="topbar"><div class="wrap"><b>학교 민원 관리</b><nav class="tabs noprint">{tabs}</nav>'
+            f'<div class="nav noprint"><button type="button" class="btn cta" data-open-new>＋ 새 민원 입력</button></div></div></header>'
+            f'<main class="wrap">{main_html}</main>'
+            f'<dialog class="dlg noprint" id="new-dlg" aria-label="새 민원 입력">{form_html or _form()}</dialog>'
+            f'<script>{PAGE_SCRIPT}{FORM_SCRIPT}{DIALOG_SCRIPT}</script>')
 
 
 def _form(v=None, error=""):
     v = v or {}
     g = lambda k: html.escape(v.get(k, ""))  # noqa: E731
     err = f'<div class="err" role="alert">{html.escape(error)}</div>' if error else ""
+    extra_open = " open" if any(v.get(k) for k in ("student", "class_no", "received_at", "call_minutes", "nosave")) else ""
     samples = "".join(f'<button type="button" class="btn" data-sample="{html.escape(t, quote=True)}">{html.escape(n)}</button>'
                       for n, t in SAMPLES)
     return f"""{err}<form method="post" action="/classify" id="f" class="box">
-<h2>＋ 새 민원 입력 <small>(시연용)</small></h2>
+<button type="button" class="dlg-x" data-close-new aria-label="닫기">×</button><h2>새 민원 입력 <small>(시연용)</small></h2>
 <p class="foot" style="margin:0 0 8px">실제 운영에서는 시스템이 민원 원문을 자동으로 받아 분류합니다(<code>POST /api/classify</code>). 담당자 화면에는 순화문이 먼저 보이고 원문은 [원문 보기]로만 열립니다.</p>
 <label class="field-label" for="t">접수된 민원 내용 <span class="req">필수</span></label>
 <textarea id="t" name="text" maxlength="{MAX_TEXT}" placeholder="접수한 민원 내용을 그대로 붙여넣으세요." required>{g('text')}</textarea>
 <div class="ta-foot"><span id="cnt">0 / {MAX_TEXT}자</span><span>예시 {samples}</span></div>
+<details class="drawer"{extra_open}><summary>추가 정보 <small>(시연용: 학생 · 접수 정보 · 시험 입력)</small></summary><div class="drawer-body">
 <div class="groups">
 <fieldset><legend>민원 대상 학생 <small>선택</small></legend><div class="fields">
 <label>학생 이름<input type="text" name="student" value="{g('student')}" placeholder="예: 홍길동" style="width:140px"></label>
 <label>학년반<input type="text" name="class_no" value="{g('class_no')}" placeholder="예: 305" maxlength="3" inputmode="numeric" pattern="[1-6][0-9]{{2}}" style="width:100px"></label></div>
-<p class="hint">둘 다 입력하면 같은 학생의 과거 이력(반복 민원, 종결 직후 재접촉, 과거 악성 이력)을 반영합니다. 학년반은 3학년 5반 → 305처럼 숫자 3자리이고, 둘 다 비우면 '학생 미상'으로 저장합니다.</p></fieldset>
+<p class="hint">둘 다 입력하면 같은 학생의 과거 이력(반복 민원, 종결 직후 재접촉, 과거 악성 이력)을 반영합니다. 3학년 5반 → 305, 둘 다 비우면 '학생 미상'입니다.</p></fieldset>
 <fieldset><legend>접수 정보 <small>선택</small></legend><div class="fields">
 <label>접수 시각<input type="datetime-local" name="received_at" value="{g('received_at')}"></label>
 <label>통화·면담 시간(분)<input type="number" name="call_minutes" min="0" step="1" value="{g('call_minutes')}" style="width:110px"></label></div>
-<p class="hint">접수 시각은 업무시간 외 연락, 통화·면담 시간은 20분 초과 판정에 쓰입니다. 비워도 됩니다.</p></fieldset>
-</div>
-<div class="actions"><button type="submit" id="go" class="primary">분류하기</button><a class="btn" href="/">초기화</a>
-<label class="chk"><input type="checkbox" name="nosave" value="1" {'checked' if v.get('nosave') else ''}>시험 입력 (DB에 저장 안 함)</label></div>
-<p class="foot" style="margin-top:12px">저장된 민원은 대시보드에 나타나고 처리 경과를 기록할 수 있습니다. 전화번호·주민번호·이메일은 가려진 채 저장됩니다.</p></form>"""
+<p class="hint">비우면 접수 시각은 지금, 통화 시간은 없음으로 봅니다.</p></fieldset>
+<label class="chk"><input type="checkbox" name="nosave" value="1" {'checked' if v.get('nosave') else ''}>시험 입력 (DB에 저장 안 함)</label>
+</div></div></details>
+<div class="actions"><button type="submit" id="go" class="primary">분류하기</button><button type="button" class="btn" data-close-new>취소</button></div>
+<p class="foot" style="margin-top:12px">저장된 민원은 민원 목록에 나타나고 처리 경과를 기록할 수 있습니다. 전화번호·주민번호·이메일은 가려진 채 저장됩니다.</p></form>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -129,7 +158,7 @@ class Handler(BaseHTTPRequestHandler):
     def _not_found(self):
         self._send(404, _layout('<div class="box"><h2>찾을 수 없습니다</h2><a class="btn" href="/">대시보드로</a></div>'))
 
-    def _dashboard(self, form_html, filters=None, page=1, code=200):
+    def _dashboard(self, filters=None, page=1, code=200, form_html=None):
         filters = filters or {}
         store = self.service.store
         rows, total = store.list_complaints(
@@ -137,11 +166,15 @@ class Handler(BaseHTTPRequestHandler):
             urgency=filters.get("urgency"), homeroom=filters.get("homeroom"), overdue=bool(filters.get("overdue")),
             q=filters.get("q"), page=page, per_page=PER_PAGE)
         stats = store.stats()
+        stats["notice_due"] = sum(1 for p in notice_status(store.list_notice_plans()) if p["state"] == "due")
+        self._send(code, _layout(render_dashboard(stats, rows, total, filters, page, PER_PAGE), "list", form_html))
+
+    def _analysis(self):
+        store = self.service.store
         report = season_report(store.topic_rows(), date.today())
         plans = notice_status(store.list_notice_plans())
-        stats["notice_due"] = sum(1 for p in plans if p["state"] == "due")
-        body = render_dashboard(stats, rows, total, filters, page, PER_PAGE, form_html, render_season(report, plans, date.today()))
-        self._send(code, _layout(body))
+        body = render_analysis(store.stats(), render_season(report, plans, date.today()))
+        self._send(200, _layout(body, "analysis"))
 
     def _pdf_href(self, case_id):
         f = os.path.join(self.out_root, case_id, "evidence_highlighted.pdf")
@@ -171,7 +204,9 @@ class Handler(BaseHTTPRequestHandler):
                 page = max(int(qs.get("page", ["1"])[0]), 1)
             except ValueError:
                 page = 1
-            return self._dashboard(_form(), filters, page)
+            return self._dashboard(filters, page)
+        if path == "/analysis":
+            return self._analysis()
         m = re.match(r"^/complaints/(\d+)$", path)
         if m:
             return self._detail(int(m.group(1)), new=bool(qs.get("new")))
@@ -198,7 +233,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/notices/generate":
             store = self.service.store
             store.upsert_notice_plans(plans_from_report(season_report(store.topic_rows(), date.today())))
-            return self._redirect("/#notices")
+            return self._redirect("/analysis#notices")
         m = re.match(r"^/notices/(\d+)/send$", path)
         if m:
             return self._post_notice_sent(int(m.group(1)))
@@ -214,7 +249,7 @@ class Handler(BaseHTTPRequestHandler):
     def _fail(self, v, msg, is_json, code=400):
         if is_json:
             return self._json(code, {"error": msg})
-        self._dashboard(_form(v, msg), code=code)
+        self._dashboard(code=code, form_html=_form(v, msg))
 
     def _post_classify(self, v, is_json):
         text = (v.get("text") or "").strip()
@@ -242,7 +277,10 @@ class Handler(BaseHTTPRequestHandler):
                                               save=not v.get("nosave"))
             cid = res.get("complaint_id")
             case_id = f"complaint-{cid}" if cid else f"web-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:4]}"
-            self.service.save_outputs(res, used, os.path.join(self.out_root, case_id))
+            if not cid:                 # 시험 입력(저장 안 함) 결과 폴더는 가장 최근 것 하나만 남긴다
+                for old in glob.glob(os.path.join(self.out_root, "web-*")):
+                    shutil.rmtree(old, ignore_errors=True)
+            self.service.save_pdf(used, os.path.join(self.out_root, case_id))
         except ValueError as e:         # 학생 이름·학년반 입력 오류
             return self._fail(v, str(e), is_json)
         except Exception as e:  # noqa: BLE001
@@ -286,7 +324,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._not_found()
         except (ValueError, UnicodeDecodeError):
             return self._send(400, "요청 형식이 올바르지 않습니다.", "text/plain; charset=utf-8")
-        self._redirect("/#notices")
+        self._redirect("/analysis#notices")
 
     def _post_progress(self, cid, action):
         store = self.service.store

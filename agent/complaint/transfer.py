@@ -15,6 +15,13 @@ CRITERIA = [   # 매뉴얼 12쪽 '지원 요청 및 이첩 기준(안)' 원문
     "학교에서 분쟁조정, 중재, 법률지원 등을 받았음에도 자체적으로 해결이 불가한 경우",
     "기타 학교의 정상적인 교육활동에 심각한 지장을 초래하는 경우",
 ]
+CRITERIA_SHORT = [   # 화면·보고서에서 번호 대신 쓰는 기준 요약
+    "같은 민원을 3회 이상 반복하거나 위력을 행사함",
+    "퇴거명령·민원 제한에도 따르지 않고 계속 민원을 제기함",
+    "처벌이 가능할 정도의 중대한 위법 행위",
+    "분쟁조정·중재·법률지원을 받아도 학교에서 해결하기 어려움",
+    "학교의 정상적인 교육활동에 심각한 지장을 줌",
+]
 FORM_CATEGORIES = ["교무/학사", "학부모/교직원 소통", "기타", "생활지도/상담", "학교 운영"]    # 서식의 제기대상 분류(서식 순서)
 # 담당 부서 -> 서식의 제기대상 분류. 서식은 5분류라 부서 체계와 1:1이 아니며 자동 제안일 뿐이다.
 DEPT_TO_FORM = {"교무기획부": "교무/학사", "교수학습지원부": "교무/학사", "고교학점제운영부": "교무/학사",
@@ -109,7 +116,7 @@ def checklist(result):
         r5.append(f"동일·유사 민원이 {repeat}회째 반복되어 담당 교직원의 업무에 지장을 줄 가능성이 있습니다")
     r5.append("실제로 교육활동에 심각한 지장이 있었는지는 담당자가 사실을 확인해야 합니다")
     out.append((st5, r5))
-    return [{"no": i + 1, "text": CRITERIA[i], "state": s, "reasons": r} for i, (s, r) in enumerate(out)]
+    return [{"no": i + 1, "text": CRITERIA[i], "short": CRITERIA_SHORT[i], "state": s, "reasons": r} for i, (s, r) in enumerate(out)]
 
 
 def _ymd(created):
@@ -161,12 +168,11 @@ def build_transfer(result, complaint=None, school_name="", prior_texts=None):
 
     # 이첩 사유 (작성예시 문형을 따르고, 해당 기준 번호를 적는다)
     if chosen:
-        nos = ", ".join(f"{c['no']}번" for c in chosen)
-        why = [f"체크리스트(매뉴얼 12쪽 '지원 요청 및 이첩 기준(안)') {nos} 기준에 해당합니다."]
-        why += [f"- {c['no']}번 [{c['state']}] {'; '.join(c['reasons'][:2])}" for c in chosen]
-        todo = [c["no"] for c in cl if c["state"] == "확인 필요"]
+        why = ["매뉴얼 12쪽 '지원 요청 및 이첩 기준(안)' 중 다음에 해당합니다."]
+        why += [f"- {c['short']} [{c['state']}]: {'; '.join(c['reasons'][:2])}" for c in chosen]
+        todo = [c["short"] for c in cl if c["state"] == "확인 필요"]
         if todo:
-            why.append("※ 학교 기록으로 담당자가 확인할 기준: " + ", ".join(f"{n}번" for n in todo))
+            why.append("※ 학교 기록으로 담당자가 확인할 사항: " + " / ".join(todo))
         if result.get("repeat_count", 1) >= 3:
             why.append(f"(작성예시 문형) 합리적인 답변을 했음에도 불구하고 3회 이상 동일·유사한 민원을 지속 제기하여 처리를 요구하거나 "
                        f"위력을 행사하였기에 이첩 및 지원 요청합니다 (동일·유사 민원 {result.get('repeat_count')}회째).")

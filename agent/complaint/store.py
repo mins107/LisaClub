@@ -155,6 +155,21 @@ def _jaccard(a: str, b: str) -> float:
     return len(A & B) / len(A | B) if A and B else 0.0
 
 
+MAL_TRAIT_SEVERITY = 3    # 반복민원으로 셀 민원의 악성 특성: 심각도 3 이상이면서 확신 있는 규칙이 걸림(팀 결정)
+
+
+def malicious_trait(hits):
+    """분류 결과의 악성 유형 목록(hit dict)에 '악성 특성'이 있는지. 심각도 3 이상이고 확신 낮은 규칙(오탐 가능)이 아닌 것만 인정한다."""
+    return any((h.get("severity") or 0) >= MAL_TRAIT_SEVERITY and h.get("confident", True) for h in hits or [])
+
+
+def _malicious_trait(result_json):
+    try:
+        return malicious_trait(json.loads(result_json).get("malicious"))
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -274,7 +289,8 @@ class Store:
                "same_student": 같은 학생의 동일·유사 민원(기간 이내),
                "similar_others": 다른 학생의 매우 유사한 민원(참고용),
                "recent_closed": 종결 직후 재접촉이면 그 종결 민원, 아니면 None,
-               "prior_malicious": 같은 학생의 악성 의심 민원 건수(기간 이내)}
+               "prior_malicious": 같은 학생의 악성 의심 민원 건수(기간 이내),
+               "repeat_candidates": 같은 학생의 미해결(접수·처리 중) 민원 중 악성 특성이 있는 것(내용 포함, 유사도는 아직 안 잼)}
         """
         now = now or _now()
         with self.engine.connect() as c:
@@ -293,7 +309,7 @@ class Store:
                                                            complaints.c.route == "ESCALATE")).scalar()
                 summary = {"name": student.name, "class_no": student.class_no, "total": total, "escalated": esc,
                            "last_at": _local(last)}
-        same, others, recent_closed, malicious = [], [], None, 0
+        same, others, recent_closed, malicious, candidates = [], [], None, 0, []
         recontact_from = now - timedelta(hours=self.recontact_hours)
         for r in rows:
             sim = _jaccard(r["text_masked"], text_)
@@ -301,8 +317,10 @@ class Store:
             item = {"id": r["id"], "created_at": _local(r["created_at"]),
                     "student": f"{r['s_name']}({r['s_class']})" if r["s_name"] else None,
                     "route": r["route"], "similarity": round(sim, 2), "snippet": _snippet(_soft(r)), "snippet_raw": _snippet(r["text_masked"], 400),
-                    "closed": closed}
+                    "closed": closed, "status": r["status"], "malicious_trait": _malicious_trait(r["result_json"])}
             if student_id and r["student_id"] == student_id:
+                if r["status"] in OPEN_STATUSES and item["malicious_trait"]:
+                    candidates.append({**item, "text": r["text_masked"]})      # 반복민원 후보(유사도는 pipeline에서 잰다)
                 if r["route"] == "ESCALATE":
                     malicious += 1
                 if closed and recent_closed is None and r["created_at"] >= recontact_from:
@@ -312,7 +330,7 @@ class Store:
             elif sim >= OTHER_STUDENT_SIM:
                 others.append(item)
         return {"student": summary, "same_student": same, "similar_others": others[:5],
-                "recent_closed": recent_closed, "prior_malicious": malicious}
+                "recent_closed": recent_closed, "prior_malicious": malicious, "repeat_candidates": candidates}
 
     def save(self, result, student=None, received_at=None, call_minutes=None, closed_by_repeat=False):
         """분류가 끝난 민원 1건을 저장하고 민원 번호(id)를 돌려준다. 학생이 없으면 '학생 미상'으로 저장한다."""

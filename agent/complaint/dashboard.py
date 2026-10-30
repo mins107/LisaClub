@@ -48,6 +48,7 @@ DASH_CSS = """
 .pl-due{background:var(--red)} .pl-waiting{background:var(--muted)} .pl-sent{background:var(--green)}
 .nt pre{white-space:pre-wrap;margin:6px 0} .nt form{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
 .nt input[type=text]{padding:5px 8px;font:inherit;font-size:.88rem;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:8px}
+.page-title{font-size:1.3em;margin:4px 0 14px}
 .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:10px}
 .filters label{display:flex;flex-direction:column;font-size:.74em;color:var(--muted);gap:2px}
 .filters select,.filters input[type=text]{padding:6px 8px;font:inherit;font-size:.9rem;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:8px}
@@ -68,6 +69,7 @@ background:color-mix(in srgb,var(--k) 16%,transparent);color:var(--k);border:1px
 .pager{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:12px;font-size:.88em}
 .empty{padding:30px 0;text-align:center;color:var(--muted)}
 /* 상세: 처리 경과 */
+.cd-head{margin:2px 0 18px} .cd-title{display:flex;align-items:center;gap:10px;margin:6px 0 2px} .cd-title h1{font-size:1.45em;margin:0}
 .head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-bottom:12px} .head h1{font-size:1.25em;margin:0}
 .meta{font-size:.85em;color:var(--muted)} .back{font-size:.88em;text-decoration:none;color:var(--primary)}
 .okbanner{padding:9px 14px;border-radius:10px;background:color-mix(in srgb,var(--green) 14%,transparent);color:var(--green);font-weight:700;margin-bottom:12px}
@@ -239,36 +241,34 @@ def render_season(report, plans, today):
     return f'<div class="box">{head}{heat}{gen}{notes}</div>{copy_js}'
 
 
-def render_dashboard(stats, rows, total, filters, page, per_page, form_html, season_html=""):
-    """메인 화면: 요약 숫자, 그래프, 새 민원 입력, 조회 조건, 민원 목록."""
-    bs = stats["by_status"]
-    kpis = [("전체 민원", stats["total"], _qs({}), ""),
-            ("진행 중 (접수·처리 중)", stats["open"], _qs({}, status="open"), ""),
+def render_dashboard(stats, rows, total, filters, page, per_page):
+    """메인 화면: 처리할 일을 보여 주는 요약 숫자(누르면 목록이 걸러짐)와 민원 목록."""
+    kpis = [("진행 중", stats["open"], _qs({}, status="open"), ""),
             ("기한 초과", stats["overdue"], _qs({}, overdue=1), "is-alert" if stats["overdue"] else ""),
             ("담임 전달 대기", stats["homeroom_pending"], _qs({}, homeroom="pending"), "is-warn" if stats["homeroom_pending"] else ""),
-            *([("가정통신문 전달 필요", stats["notice_due"], "#notices", "is-warn" if stats["notice_due"] else "")]
-              if "notice_due" in stats else []),
-            ("완료", bs["완료"], _qs({}, status="완료"), ""), ("이첩", bs["이첩"], _qs({}, status="이첩"), "")]
+            *([("가정통신문 전달 필요", stats["notice_due"], "/analysis#notices", "is-warn" if stats["notice_due"] else "")]
+              if "notice_due" in stats else [])]
     kp = "".join(f'<a class="kpi {cls}" href="{html.escape(h)}"><div class="n">{n}</div><div class="l">{html.escape(l)}</div></a>'
                  for l, n, h, cls in kpis)
-    mx = max([stats["total"], 1])
-    st_items = [(s, s, bs[s]) for s in STATUSES]
-    rt_items = [(k, ROUTE_SHORT[k], stats["by_route"].get(k, 0)) for k in ROUTE_SHORT]
-    daily = stats["daily"]
-    dmax = max([n for _, n in daily] + [1])
-    cols = "".join(f'<div title="{d} · {n}건" style="height:{max(n * 100 // dmax, 4)}%"></div>' for d, n in daily)
-    charts = (f'<div class="charts"><div class="chart"><h3>처리 상태</h3>{_bars(st_items, mx, lambda k: _qs({}, status=k))}</div>'
-              f'<div class="chart"><h3>분류</h3>{_bars(rt_items, mx, lambda k: _qs({}, route=k))}</div>'
-              f'<div class="chart" style="grid-column:1/-1">{_dept_chart(stats)}</div>'
-              f'<div class="chart" style="grid-column:1/-1"><h3>최근 {len(daily)}일 접수 건수</h3><div class="daily">{cols}</div>'
-              f'<div class="daily-l"><span>{daily[0][0]}</span><span>{daily[-1][0]}</span></div></div></div>')
     pages = max((total + per_page - 1) // per_page, 1)
     f = {k: v for k, v in filters.items() if v}
     prev = f'<a class="btn" href="{html.escape(_qs(f, page=page - 1))}">← 이전</a>' if page > 1 else ""
     nxt = f'<a class="btn" href="{html.escape(_qs(f, page=page + 1))}">다음 →</a>' if page < pages else ""
     pager = f'<div class="pager">{prev}<span>{page} / {pages} 쪽 · 총 {total}건</span>{nxt}</div>' if total else ""
-    return (f'<div class="kpis">{kp}</div><div class="dash"><div class="dash-left" id="new">{form_html}</div>'
-            f'<div>{charts}{season_html}<div class="box"><h2>민원 목록</h2>{_filters_form(filters)}{_rows(rows)}{pager}</div></div></div>')
+    return (f'<div class="kpis">{kp}</div>'
+            f'<div class="box"><h2>민원 목록</h2>{_filters_form(filters)}{_rows(rows)}{pager}</div>')
+
+
+def render_analysis(stats, season_html=""):
+    """분석 화면: 처리 상태·분류 그래프, 부서별 민원 현황과 개선 검토 부서, 시즌별 민원 키워드와 가정통신문."""
+    bs = stats["by_status"]
+    mx = max([stats["total"], 1])
+    st_items = [(s, s, bs[s]) for s in STATUSES]
+    rt_items = [(k, ROUTE_SHORT[k], stats["by_route"].get(k, 0)) for k in ROUTE_SHORT]
+    charts = (f'<div class="charts"><div class="chart"><h3>처리 상태 (전체 {stats["total"]}건)</h3>{_bars(st_items, mx, lambda k: _qs({}, status=k))}</div>'
+              f'<div class="chart"><h3>분류</h3>{_bars(rt_items, mx, lambda k: _qs({}, route=k))}</div>'
+              f'<div class="chart" style="grid-column:1/-1">{_dept_chart(stats)}</div></div>')
+    return f'<h1 class="page-title">분석</h1>{charts}{season_html}'
 
 
 def _stepper(status):
@@ -296,32 +296,32 @@ def _timeline(events):
 
 
 def render_detail(c, pdf_href=None, new=False, error=""):
-    """민원 상세: 처리 상태와 경과를 확인·기록하고, 분류 결과 전체를 본다."""
+    """민원 상세: 머리줄(번호·상태·학생·접수 시각) + render_body. 처리 상태 기록은 오른쪽 카드, 처리 경과는 참고 자료 안."""
     cid = c["id"]
-    banner = '<div class="okbanner">분류가 끝나 DB에 저장되었습니다. 아래에서 처리 경과를 기록해 주세요.</div>' if new else ""
+    banner = '<div class="okbanner">분류가 끝나 저장되었습니다.</div>' if new else ""
     err = f'<div class="err" role="alert">{html.escape(error)}</div>' if error else ""
-    due = (f'<p class="dueline">처리 기한 <b>{html.escape(c["deadline"])}</b>'
-           + (f' · <span class="{"over" if c["overdue"] else ""}"><b>{html.escape(c["due"])}</b></span>' if c["due"] else "") + "</p>")
-    done = f'<p class="meta">처리 완료 {html.escape(c["completed_at"])}</p>' if c["completed_at"] else ""
+    due_note = (f'<span class="{"over" if c["overdue"] else ""}">{html.escape(c["due"])}</span>' if c["due"] else "")
     status_opts = '<option value="">상태 유지</option>' + "".join(
-        f'<option value="{s}">{s}{" (현재)" if s == c["status"] else ""}</option>' for s in STATUSES if s != c["status"])
-    rec = (f'<form class="rec" method="post" action="/complaints/{cid}/record"><label>처리 상태 변경'
-           f'<select name="status">{status_opts}</select></label>'
-           f'<label>처리자 (선택)<input type="text" name="actor" maxlength="50" placeholder="예: 김민원"></label>'
-           f'<label>경과 메모<textarea name="note" rows="3" maxlength="1000" placeholder="예: 학부모에게 전화로 설명함"></textarea></label>'
-           f'<button type="submit">경과 기록하기</button></form>')
+        f'<option value="{s}">{s}</option>' for s in STATUSES if s != c["status"])
+    last = c["events"][-1] if c["events"] else None
+    last_html = (f'<p class="cd-last">최근 기록 · {html.escape(last["created_at"])} {html.escape(last["kind"])}'
+                 f'{" · " + html.escape(last["note"]) if last.get("note") else ""}</p>') if last else ""
+    status_html = (f'<section class="cd-card o6"><div class="cd-label">처리 상태 {status_pill(c["status"])}</div>'
+                   f'<form class="cd-form" method="post" action="/complaints/{cid}/record">'
+                   f'<select name="status" aria-label="처리 상태 변경">{status_opts}</select>'
+                   f'<input type="text" name="actor" maxlength="50" placeholder="처리자 (선택)">'
+                   f'<textarea name="note" maxlength="1000" placeholder="경과 메모 (예: 학부모에게 전화로 설명함)"></textarea>'
+                   f'<button type="submit" class="cd-btn solid">기록하기</button></form>'
+                   f'{"<p class=cd-last>처리 완료 · " + html.escape(c["completed_at"]) + "</p>" if c["completed_at"] else last_html}</section>')
     footer = ""
     if c["homeroom_needed"]:
         footer = (f'<span class="hr ok">✓ 전달 완료 · {html.escape(c["homeroom_sent_at"])}</span>' if c["homeroom_sent_at"] else
-                  f'<form class="hr-form" method="post" action="/complaints/{cid}/homeroom">'
-                  f'<input type="text" name="note" maxlength="200" placeholder="전달 방법 (예: 메신저로 전달)">'
-                  f'<input type="text" name="actor" maxlength="50" placeholder="처리자" style="width:110px">'
-                  f'<button type="submit">전달함으로 표시</button></form>')
-    head = (f'<a class="back" href="/">← 대시보드로</a><div class="head"><h1>민원 #{cid}</h1>{status_pill(c["status"])}'
-            f'<span class="rt {ROUTE_CLASS[c["route"]]}">{html.escape(ROUTE_SHORT[c["route"]])}</span>'
-            f'<span class="meta">{html.escape(c["student"] or "학생 미상")} · 접수 {html.escape(c["created_at"])}'
-            f' · 최근 갱신 {html.escape(c["updated_at"] or c["created_at"])}</span></div>')
-    panel = (f'<div class="cols"><div class="col"><div class="box"><h2>처리 상태</h2>{_stepper(c["status"])}{due}{done}{rec}</div></div>'
-             f'<div class="col"><div class="box"><h2>처리 경과 <small>({len(c["events"])}건)</small></h2>{_timeline(c["events"])}</div></div></div>')
-    return head + banner + err + panel + render_body(c["result"], pdf_href, footer,
-                                                       f"/complaints/{cid}/transfer.hwpx" if c["route"] == "ESCALATE" or c["status"] == "이첩" else "")
+                  f'<form class="cd-form" method="post" action="/complaints/{cid}/homeroom">'
+                  f'<input type="text" name="note" maxlength="200" placeholder="전달 방법 (예: 메신저)">'
+                  f'<button type="submit" class="cd-btn">전달함으로 표시</button></form>')
+    head = (f'<div class="cd-head"><a class="back" href="/">← 민원 목록</a>'
+            f'<div class="cd-title"><h1>민원 #{cid}</h1>{status_pill(c["status"])}</div>'
+            f'<div class="meta">{html.escape(c["student"] or "학생 미상")} · 접수 {html.escape(c["created_at"])}</div></div>')
+    timeline = f'<div class="box"><h3>처리 경과 <small>({len(c["events"])}건)</small></h3>{_timeline(c["events"])}</div>'
+    transfer_href = f"/complaints/{cid}/transfer.hwpx" if c["route"] == "ESCALATE" or c["status"] == "이첩" else ""
+    return head + banner + err + render_body(c["result"], pdf_href, footer, transfer_href, due_note, status_html, timeline)

@@ -9,6 +9,8 @@ from datetime import datetime
 from . import rules as R
 from . import soften as SF
 from . import schedule as SC
+from . import review as RV
+from . import similarity as SIM
 from . import tasks as TK
 from . import notices as NT
 from .llm import parse_json
@@ -90,7 +92,15 @@ class Used:
 
 class _Collector:
     def __init__(self, retr):
-        self.retr, self.items = retr, []
+        self.retr, self.items, self.log = retr, [], []     # log: 어떤 규칙 문구로 어떤 근거를 붙였는지(검토 루프가 점검한다)
+
+    def add_evidence(self, ev, score, role, reason):
+        """이미 찾은 근거 문장을 근거 목록에 더한다(검토 루프의 근거 보강). 새 라벨을 돌려준다."""
+        hit = next((u for u in self.items if u.ev.id == ev.id), None)
+        if hit is None:
+            hit = Used(f"E{len(self.items) + 1}", ev, role, reason, score)
+            self.items.append(hit)
+        return hit.label
 
     def add(self, anchor, role, reason, k=1):
         labels = []
@@ -102,6 +112,7 @@ class _Collector:
             elif reason not in hit.reason:
                 hit.reason += f" / {reason}"
             labels.append(hit.label)
+        self.log.append({"anchor": anchor, "role": role, "reason": reason, "labels": list(labels)})
         return labels
 
 
@@ -149,33 +160,57 @@ def _homeroom_handoff(llm, text, student, dept, deadline, ev_assign, ev_due):
             "actions": actions, "message": message}
 
 
-def _draft(llm, text, route, used, notes):
+def _plain(text):
+    """복사해 바로 붙일 수 있게 마크다운 기호와 근거 표기를 지운다(**굵게**, ++, #제목, > 인용, `코드`, [E1], '근거: E1' 줄)."""
+    lines = []
+    for ln in (text or "").splitlines():
+        if re.match(r"\s*근거\s*[:：]", ln):
+            continue
+        ln = re.sub(r"^\s{0,3}#{1,6}\s*", "", ln)
+        ln = re.sub(r"^\s*>\s?", "", ln)
+        ln = re.sub(r"^\s*[-*+]\s+", "· ", ln)
+        ln = re.sub(r"(\*\*|__|\+\+|~~|`)", "", ln)
+        ln = re.sub(r"(?<!\w)\*(?!\s)|(?<!\s)\*(?!\w)", "", ln)
+        ln = re.sub(r"\s*\[E\d+\]", "", ln)
+        lines.append(ln.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _draft(llm, text, route, used, notes, contact=False):
+    """반환: (답변 초안, 담당자 참고, 근거 번호 목록).
+    초안은 민원인에게 그대로 보낼 글이라 마크다운 기호·근거 표기를 넣지 않는다. 담당자 참고는 LLM이 쓴 경우에만 있다(없으면 '').
+    LLM이 존재하지 않는 근거 번호를 대면 버리고 기본 문구를 쓴다."""
     snippets = "\n".join(f"[{u.label}] {u.ev.text}" for u in used[:6])
+    valid = {u.label for u in used}
     if llm.available:
         try:
-            sys = ("당신은 학교 민원대응팀 보조자다. 학교 안내문 어조로 정중하고 차분하게 답변 초안을 쓴다. "
-                   "감정을 자극하는 표현과 단정적 비난을 피하고, 제공된 근거에 없는 규정은 말하지 않는다. "
-                   "본문에 [E1] 같은 표기는 쓰지 말고 마지막 줄에 '근거: E1, E2' 형식으로만 적는다.")
+            sys = ("당신은 학교 민원대응팀 보조자다. JSON으로만 답한다. "
+                   '형식: {"reply": "민원인에게 보낼 답변", "staff_note": "담당자 참고", "evidence": ["E1"]}. '
+                   "reply: 학교 안내문 어조로 정중하고 차분하게 쓴다. 감정을 자극하는 표현과 단정적 비난을 피하고, 제공된 근거에 없는 규정은 말하지 않는다. "
+                   "그대로 복사해 보낼 글이므로 마크다운 기호(**, ++, #, -, > 등)와 [E1]·'근거:' 같은 표기를 쓰지 않는다. "
+                   "staff_note: 담당자가 보내기 전에 알아야 할 점을 1~3문장으로 쓴다(필요 없으면 빈 문자열). 근거 번호는 쓰지 않는다. "
+                   "evidence: reply의 근거가 된 [매뉴얼 근거]의 번호만 적는다.")
             usr = f"[민원]\n{text}\n\n[처리 방향]\n{notes}\n\n[매뉴얼 근거]\n{snippets}"
-            out = llm.chat(sys, usr).strip()
-            cited = set(re.findall(r"E\d+", out.splitlines()[-1])) if out else set()
-            valid = {u.label for u in used}
-            if cited - valid:                       # 존재하지 않는 근거를 인용하면 폐기
-                raise ValueError("근거 라벨 오류")
-            return out
+            out = parse_json(llm.chat(sys, usr, json_mode=True))
+            reply = _plain(out.get("reply", ""))
+            cited = [e for e in out.get("evidence", []) if isinstance(e, str)]
+            if not reply or set(cited) - valid:                 # 빈 초안이거나 존재하지 않는 근거를 인용하면 폐기
+                raise ValueError("초안 오류")
+            return reply, _plain(out.get("staff_note", "")), cited
         except Exception:  # noqa: BLE001
             pass
     base = {
-        "REJECTABLE": ("안녕하세요. 문의해 주셔서 감사합니다. 말씀하신 사항은 학교가 정한 공식 민원 접수 창구"
-                       "(학교 대표번호·온라인 민원 창구)를 통해 접수해 주셔야 처리할 수 있습니다. "
-                       "교직원 개인 연락처 등 다른 경로로는 민원을 받지 못하는 점 양해 부탁드립니다. "
-                       "공식 창구로 접수해 주시면 확인 후 안내해 드리겠습니다."),
+        "REJECTABLE": ("안녕하세요. 문의해 주셔서 감사합니다. 교직원 개인 연락처·SNS는 안내해 드릴 수 없습니다. "
+                       "문의하실 내용은 학교 공식 민원 접수 창구(학교 대표번호·온라인 민원 창구)로 접수해 주시면 확인 후 안내해 드리겠습니다."
+                       if contact else
+                       "안녕하세요. 문의해 주셔서 감사합니다. 말씀하신 사항은 검토 결과 학교에서 처리하기 어려운 내용으로 확인되었습니다. "
+                       "자세한 사유는 담당자가 별도로 안내해 드리겠습니다."),
         "HANDLE": ("안녕하세요. 소중한 의견을 전해 주셔서 감사합니다. 접수된 내용을 확인하여 담당자와 협의한 뒤 "
                    "처리 기한 안에 안내해 드리겠습니다. 추가로 확인이 필요한 사항은 학교 대표번호로 연락드리겠습니다."),
         "ESCALATE": ("귀하께서 제기하신 민원 중 일부 표현은 관련 법령에 따라 처벌될 수 있습니다. "
                      "앞으로도 동일한 표현이 반복될 경우 학교는 법적 조치 등을 취할 수 있음을 알려 드리니 양지하여 주시기 바랍니다."),
     }[route]
-    return base + "\n근거: " + ", ".join(u.label for u in used[:3])
+    return base, "", [u.label for u in used[:3]]
 
 
 def _judge(llm, text, retr):
@@ -195,13 +230,16 @@ def _judge(llm, text, retr):
         return {}
 
 
-def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None, save=True, calendar=None):
+def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None, save=True, calendar=None,
+        sim_threshold=0.8, sim_samples=3):
     """student는 store.Student(학생 이름 + 학년반) 또는 None. None이면 학생 기준 이력 판단은 하지 않고 '학생 미상'으로 저장한다.
     save=False면 DB에 저장하지 않는다(시험 입력). 이력 조회는 save와 상관없이 한다.
 
     이력 판단(매뉴얼 근거):
       - 동일·유사 민원 3회 이상 반복 -> 종결 가능 (PDF 11·16·58쪽)
-      - 3회 이상 유사 민원을 종료했는데도 지속 -> 교육(지원)청 이첩 (PDF 16쪽)
+      - 악성 반복: 같은 학생의 미해결 민원 중 악성 특성(심각도 3 이상·확신 규칙)이 있고 유사도가 임계값 이상인 것이
+        이번 민원 포함 3건 이상 -> 악성 의심(이첩 검토) (PDF 16쪽). 3회 이상 유사 민원을 종료했는데도 지속하는 경우의 이첩 기준은
+        체크리스트(transfer.py)에서 따로 본다.
       - 종결 민원 직후 재접촉 -> 거부 가능 (PDF 11쪽)
       - 과거 악성 이력이 있는 민원인의 재접촉 -> 1차·2차 대응 (PDF 49쪽), 반복 시 접촉 제한 검토 (PDF 26쪽)"""
     text = mask_pii(text)
@@ -211,7 +249,19 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
     repeat = len(prior) + 1
     closed_before = any(p["closed"] for p in prior)
 
-    mal = R.detect_malicious(text, repeat)
+    # 악성 반복: 같은 학생의 미해결 민원 중 악성 특성(심각도 3 이상·확신 규칙)이 있고 이번 민원과 유사도가 임계값 이상인 것(K)만 센다.
+    # 단순히 비슷한 민원이 3번 들어왔다고 악성으로 보지 않는다(억울한 악성 분류 방지). 이번 민원이 1회째.
+    rep_items, near_items = [], []
+    for cand in history.get("repeat_candidates", []):
+        sim, how = SIM.score(llm, text, cand["text"], sim_samples)
+        item = {k: v for k, v in cand.items() if k != "text"} | {"similarity": sim, "sim_method": how}
+        if sim >= sim_threshold:
+            rep_items.append(item)
+        elif sim >= sim_threshold - RV.NEAR_GAP:
+            near_items.append(item)         # 임계값 바로 아래(경계): 검토 루프가 사람 확인을 요청한다
+    mal_repeat = len(rep_items) + 1
+
+    mal = R.detect_malicious(text, mal_repeat)
     rej = R.detect_reject(text, received_at, call_minutes, repeat, recontact=bool(history["recent_closed"]))
     judge = _judge(llm, text, retr)
     if judge.get("malicious") and not any(r.severity >= 3 for r, _, _ in mal):
@@ -219,7 +269,7 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
                            "특이민원 처리 방향 위법행위 발생 시 녹음 녹화 진정 요청 및 법령 저촉사항 경고", 3, False),
                     [], "; ".join(judge.get("types", [])) or "LLM 판단"))
 
-    escalate = any(r.severity >= 3 for r, _, _ in mal) or repeat >= 3 and closed_before
+    escalate = any(r.severity >= 3 for r, _, _ in mal) or mal_repeat >= 3
     route = "ESCALATE" if escalate else "REJECTABLE" if rej else "HANDLE"
 
     col = _Collector(retr)
@@ -244,6 +294,9 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
             for sid in ids:
                 _add_step(steps, sid, r.label, ev)
 
+    if rep_items:
+        notes.append(f"같은 학생의 미해결 악성 특성 민원 {len(rep_items)}건과 유사도 {int(sim_threshold * 100)}% 이상 "
+                     f"(이번 포함 {mal_repeat}회째, 3회 이상이면 악성 의심)")
     pm = history["prior_malicious"]
     if pm:
         stage = min(pm, 2)
@@ -261,7 +314,8 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
 
     homeroom, ev_assign, ev_due, ev_guide = None, [], [], []
     if route == "REJECTABLE":
-        ev_guide = col.add("공식 창구 외 경로로 학교민원을 신청하는 경우 접수창구를 민원인에게 안내 필요", "procedure", "공식 창구 안내")
+        if any(h["key"] == "personal_contact" for h in hit_out):      # 개인 연락처를 묻는 경우에만 공식 창구를 안내한다
+            ev_guide = col.add("공식 창구 외 경로로 학교민원을 신청하는 경우 접수창구를 민원인에게 안내 필요", "procedure", "공식 창구 안내")
         handler, deadline = "민원대응팀", "즉시 회신(종결 시 사유 통지)"
     elif route == "HANDLE":
         ev_assign = col.add("처리 담당자 또는 협조자 지정 단순 질의 또는 요청 사항 민원대응팀", "procedure", "담당자 지정")
@@ -292,11 +346,14 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         if any(r.key in ("abuse", "insult", "threat", "doxxing", "assault") for r, _, _ in mal):
             col.add("교육활동 침해행위 형법 협박의 죄 명예에 관한 죄 업무방해 범죄 행위", "procedure", "교육활동 침해 검토(범죄 행위)")
 
+    review = RV.run(llm, retr, col, hit_out, text=text, route=route, history=history, mal_repeat=mal_repeat,
+                    near_items=near_items, student=student, sim_threshold=sim_threshold)
     used = col.items
-    reply = _draft(llm, text, route, used, f"{ROUTE_LABEL[route]}. 담당: {handler}. {'; '.join(notes)}")
+    contact = any(h["key"] == "personal_contact" for h in hit_out)
+    reply, staff_note, reply_ev = _draft(llm, text, route, used, f"{ROUTE_LABEL[route]}. 담당: {handler}. {'; '.join(notes)}", contact)
     sched = SC.answer(text, student, calendar) if route == "HANDLE" else None
     if sched and sched["status"] == "ok":       # 학사일정 문의: 일정 API 결과로 직접 답하는 초안
-        reply = sched["reply"]
+        reply, staff_note = _plain(sched["reply"]), ""
         notes.append("학사일정 문의 - 나이스 학사일정 API 조회 결과로 답변 초안 작성(발송 전 일정 확인)")
     first, last = TK.team_tasks(text, route, deadline, student, ev_assign, ev_due, ev_guide, bool(homeroom), sched, dept=dept,
                               grade_dept=R.grade_department(student.class_no) if student else None)
@@ -329,6 +386,8 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
 
     result = {
         "route": route, "route_label": ROUTE_LABEL[route], "repeat_count": repeat,
+        "malicious_repeat": {"count": mal_repeat, "threshold": sim_threshold, "items": rep_items, "near": near_items},
+        "review": review,
         "student": student.display() if student else None,
         "reject": [h for h in hit_out if h["kind"] == "reject"],
         "malicious": [h for h in hit_out if h["kind"] == "malicious"],
@@ -337,10 +396,10 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         "department_keywords": dinfo["matched"], "topic_keywords": dinfo["keywords"],
         "grade_department": R.grade_department(student.class_no) if student else None,
         "handler": handler, "deadline": deadline, "notes": notes, "actions": actions,
-        "criteria": criteria, "reply_draft": reply, "transfer_doc": transfer, "homeroom": homeroom,
+        "criteria": criteria, "reply_draft": reply, "reply_staff_note": staff_note, "reply_evidence": reply_ev, "transfer_doc": transfer, "homeroom": homeroom,
         "schedule": sched, "notices": notice_hits,
         "llm_judge": judge or None, "llm_used": llm.available,
-        "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out),
+        "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out) or bool(review["findings"]),
         "text_masked": text, "text_soft": soft, "text_soft_method": soft_method,
         "history": {"student": history["student"], "same_student": prior, "similar_others": history["similar_others"],
                     "recent_closed": history["recent_closed"], "prior_malicious": pm},
