@@ -1,4 +1,4 @@
-"""구조도 흐름: 민원 -> (거부 가능?) -> (악성?) -> 분류/응대/이첩 문서.
+"""구조도 흐름: 민원 -> (거부 가능?) -> (특이?) -> 분류/응대/이첩 문서.
 
 LLM은 선택 요소이며, 근거(evidence)는 항상 매뉴얼 색인에서만 가져온다.
 """
@@ -9,6 +9,7 @@ from datetime import datetime
 from . import rules as R
 from . import soften as SF
 from . import schedule as SC
+from . import counter as CT
 from . import review as RV
 from . import similarity as SIM
 from . import tasks as TK
@@ -17,11 +18,11 @@ from .llm import parse_json
 
 ROUTE_LABEL = {
     "REJECTABLE": "거부(종결) 가능 민원 - 근거와 답변 초안",
-    "HANDLE": "거부 불가·비악성 - 대응팀 수준에서 처리",
-    "ESCALATE": "악성(특이) 민원 의심 - 상위기관 이전 문서 제작",
+    "HANDLE": "거부 불가·비특이 - 대응팀 수준에서 처리",
+    "ESCALATE": "특이 민원 의심 - 상위기관 이전 문서 제작",
 }
 
-# 현장 조치를 한 단계씩 쪼개 둔다. 여러 악성 유형에서 같은 단계가 나오면 한 줄로 합쳐 보여 준다.
+# 현장 조치를 한 단계씩 쪼개 둔다. 여러 특이 유형에서 같은 단계가 나오면 한 줄로 합쳐 보여 준다.
 # 아래 순서가 화면에 보이는 순서다(안전 확보 -> 증거 확보 -> 응대 -> 보고 -> 후속 조치).
 STEPS = {
     "police": ("안전 확보·신고", "경찰에 신고 (위험물이면 소방서에도)"),
@@ -32,15 +33,15 @@ STEPS = {
     "post_evidence": ("증거 확보", "게시물 증거 확보"),
     "warn": ("민원인 응대", "관련 법령에 따라 처벌받을 수 있음을 고지"),
     "end": ("민원인 응대", "상담이 어렵다고 안내하고 통화·면담 종료"),
-    "recontact1": ("민원인 응대", "재접촉 1차 (과거 악성 이력): 진정되면 정상 응대하고, 폭언이 이어지면 통화 종료"),
-    "recontact2": ("민원인 응대", "재접촉 2차 이상 (과거 악성 이력): 상급자(교감 등)가 응대해 불만을 듣고 경고한 뒤 종료"),
+    "recontact1": ("민원인 응대", "과거 특이 이력 1건: 진정되면 정상 응대하고, 폭언이 이어지면 통화 종료"),
+    "recontact2": ("민원인 응대", "과거 특이 이력 2건 이상: 상급자(교감 등)가 응대해 불만을 듣고 경고한 뒤 종료"),
     "letter": ("민원인 응대", "법적 조치 가능성을 담은 경고문 발송"),
     "block": ("민원인 응대", "출입·면담 제한 등으로 교직원과의 접촉 차단 (예약 면담, 관리자 면담, 서면·온라인 창구로 전환)"),
     "report": ("보고·보호", "관리자에게 보고"),
     "rest": ("보고·보호", "피해 교직원에게 휴게시간 부여"),
     "legal": ("후속 조치", "법적 대응 검토·협의"),
 }
-# 악성 유형 -> (필요한 단계 목록, 매뉴얼에서 근거를 찾을 문구)
+# 특이 유형 -> (필요한 단계 목록, 매뉴얼에서 근거를 찾을 문구)
 ACTIONS = {
     "assault": (["police", "help", "separate"], "폭행 발생 징후 즉시 주변에 도움 요청 담당자 현장에서 분리조치 경찰 신고"),
     "weapon": (["police", "help"], "위험물 소지 확인 시 경찰 소방서 우선 신고 조치"),
@@ -53,7 +54,7 @@ ACTIONS = {
     "doxxing": (["post_evidence", "letter", "legal"], "온라인 민원 경고공문 통지 법적조치 등을 취할 수 있다는 경고문구"),
 }
 
-# 같은 학생 민원에 과거 악성(특이) 이력이 있을 때의 재접촉 대응. 단계는 이력 건수(1건=1차, 2건 이상=2차).
+# 같은 학생 민원에 과거 특이 이력이 있을 때의 응대 안내. 단계는 이력 건수(1건=1단계, 2건 이상=2단계).
 RECONTACT_ANCHOR = {
     1: "동일 민원인과 재통화 시 1차 민원인이 진정된 경우 정상 응대하고 폭언을 지속할 경우 통화 종료",
     2: "2차 상급자가 응대하고 경고 후 통화 종료 민원인의 불만사항 등을 파악하고 폭언 등에 대한 경고 조치",
@@ -201,12 +202,13 @@ def _draft(llm, text, route, used, notes, contact=False):
             pass
     base = {
         "REJECTABLE": ("안녕하세요. 문의해 주셔서 감사합니다. 교직원 개인 연락처·SNS는 안내해 드릴 수 없습니다. "
-                       "문의하실 내용은 학교 공식 민원 접수 창구(학교 대표번호·온라인 민원 창구)로 접수해 주시면 확인 후 안내해 드리겠습니다."
+                       f"문의하실 내용은 학교 공식 민원 접수 창구({CT.full_line()})로 접수해 주시면 확인 후 안내해 드리겠습니다."
                        if contact else
                        "안녕하세요. 문의해 주셔서 감사합니다. 말씀하신 사항은 검토 결과 학교에서 처리하기 어려운 내용으로 확인되었습니다. "
                        "자세한 사유는 담당자가 별도로 안내해 드리겠습니다."),
         "HANDLE": ("안녕하세요. 소중한 의견을 전해 주셔서 감사합니다. 접수된 내용을 확인하여 담당자와 협의한 뒤 "
-                   "처리 기한 안에 안내해 드리겠습니다. 추가로 확인이 필요한 사항은 학교 대표번호로 연락드리겠습니다."),
+                   "처리 기한 안에 안내해 드리겠습니다. "
+                   f"추가로 확인이 필요한 사항은 {CT.phone_line()}로 연락드리겠습니다."),
         "ESCALATE": ("귀하께서 제기하신 민원 중 일부 표현은 관련 법령에 따라 처벌될 수 있습니다. "
                      "앞으로도 동일한 표현이 반복될 경우 학교는 법적 조치 등을 취할 수 있음을 알려 드리니 양지하여 주시기 바랍니다."),
     }[route]
@@ -221,7 +223,7 @@ def _judge(llm, text, retr):
         ids = "\n".join(f"[{e.id}] {e.text}" for e, _ in cands)
         sys = ("학교 민원 분류 보조자다. 아래 [근거 후보]만 근거로 삼아 JSON으로 답한다. "
                '형식: {"malicious": true|false, "types": [문자열], "evidence_ids": [후보 id], "rationale": "한 문장"}. '
-               "정당한 항의나 이의 제기는 악성으로 판단하지 않는다.")
+               "정당한 항의나 이의 제기는 특이으로 판단하지 않는다.")
         out = parse_json(llm.chat(sys, f"[민원]\n{text}\n\n[근거 후보]\n{ids}", json_mode=True))
         valid = {e.id for e, _ in cands}
         out["evidence_ids"] = [i for i in out.get("evidence_ids", []) if i in valid]
@@ -237,11 +239,11 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
 
     이력 판단(매뉴얼 근거):
       - 동일·유사 민원 3회 이상 반복 -> 종결 가능 (PDF 11·16·58쪽)
-      - 악성 반복: 같은 학생의 미해결 민원 중 악성 특성(심각도 3 이상·확신 규칙)이 있고 유사도가 임계값 이상인 것이
-        이번 민원 포함 3건 이상 -> 악성 의심(이첩 검토) (PDF 16쪽). 3회 이상 유사 민원을 종료했는데도 지속하는 경우의 이첩 기준은
+      - 특이 반복: 같은 학생의 미해결 민원 중 특이 민원 특성(심각도 3 이상·확신 규칙)이 있고 유사도가 임계값 이상인 것이
+        이번 민원 포함 3건 이상 -> 특이 민원 의심(이첩 검토) (PDF 16쪽). 3회 이상 유사 민원을 종료했는데도 지속하는 경우의 이첩 기준은
         체크리스트(transfer.py)에서 따로 본다.
       - 종결 민원 직후 재접촉 -> 거부 가능 (PDF 11쪽)
-      - 과거 악성 이력이 있는 민원인의 재접촉 -> 1차·2차 대응 (PDF 49쪽), 반복 시 접촉 제한 검토 (PDF 26쪽)"""
+      - 과거 특이 이력이 있는 민원인의 재접촉 -> 1차·2차 대응 (PDF 49쪽), 반복 시 접촉 제한 검토 (PDF 26쪽)"""
     text = mask_pii(text)
     soft, soft_method = SF.soften(llm, text)       # 담당자 화면용 순화문. 판정은 원문(text)으로 한다
     history = store.find_history(student, text)
@@ -249,8 +251,8 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
     repeat = len(prior) + 1
     closed_before = any(p["closed"] for p in prior)
 
-    # 악성 반복: 같은 학생의 미해결 민원 중 악성 특성(심각도 3 이상·확신 규칙)이 있고 이번 민원과 유사도가 임계값 이상인 것(K)만 센다.
-    # 단순히 비슷한 민원이 3번 들어왔다고 악성으로 보지 않는다(억울한 악성 분류 방지). 이번 민원이 1회째.
+    # 특이 반복: 같은 학생의 미해결 민원 중 특이 민원 특성(심각도 3 이상·확신 규칙)이 있고 이번 민원과 유사도가 임계값 이상인 것(K)만 센다.
+    # 단순히 비슷한 민원이 3번 들어왔다고 특이으로 보지 않는다(억울한 특이 분류 방지). 이번 민원이 1회째.
     rep_items, near_items = [], []
     for cand in history.get("repeat_candidates", []):
         sim, how = SIM.score(llm, text, cand["text"], sim_samples)
@@ -265,7 +267,7 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
     rej = R.detect_reject(text, received_at, call_minutes, repeat, recontact=bool(history["recent_closed"]))
     judge = _judge(llm, text, retr)
     if judge.get("malicious") and not any(r.severity >= 3 for r, _, _ in mal):
-        mal.append((R.Rule("llm", "LLM 판단 악성 의심", "malicious", "",
+        mal.append((R.Rule("llm", "LLM 판단 특이 민원 의심", "malicious", "",
                            "특이민원 처리 방향 위법행위 발생 시 녹음 녹화 진정 요청 및 법령 저촉사항 경고", 3, False),
                     [], "; ".join(judge.get("types", [])) or "LLM 판단"))
 
@@ -295,16 +297,16 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
                 _add_step(steps, sid, r.label, ev)
 
     if rep_items:
-        notes.append(f"같은 학생의 미해결 악성 특성 민원 {len(rep_items)}건과 유사도 {int(sim_threshold * 100)}% 이상 "
-                     f"(이번 포함 {mal_repeat}회째, 3회 이상이면 악성 의심)")
+        notes.append(f"같은 학생의 미해결 특이 민원 특성 민원 {len(rep_items)}건과 유사도 {int(sim_threshold * 100)}% 이상 "
+                     f"(이번 포함 {mal_repeat}회째, 3회 이상이면 특이 민원 의심)")
     pm = history["prior_malicious"]
     if pm:
         stage = min(pm, 2)
-        notes.append(f"같은 학생 민원에 과거 악성(특이) 의심 이력 {pm}건 - 재접촉 {stage}차 대응 참고")
-        _add_step(steps, f"recontact{stage}", "과거 악성 이력",
-                  col.add(RECONTACT_ANCHOR[stage], "procedure", f"과거 악성 이력 재접촉 {stage}차 대응"))
+        notes.append(f"같은 학생 민원에 과거 특이 민원 의심 이력 {pm}건")
+        _add_step(steps, f"recontact{stage}", "과거 특이 이력",
+                  col.add(RECONTACT_ANCHOR[stage], "procedure", f"과거 특이 이력 응대 {stage}단계"))
         if route == "ESCALATE":
-            _add_step(steps, "block", "악성 민원 반복", col.add(CONTACT_LIMIT_ANCHOR, "procedure", "반복 악성 민원 접촉 제한 검토"))
+            _add_step(steps, "block", "특이 민원 반복", col.add(CONTACT_LIMIT_ANCHOR, "procedure", "반복 특이 민원 접촉 제한 검토"))
     actions = [{"phase": STEPS[sid][0], "text": STEPS[sid][1], "reasons": steps[sid]["reasons"],
                 "evidence": steps[sid]["evidence"]} for sid in STEPS if sid in steps]
 
@@ -369,7 +371,7 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         homeroom["grade_department"] = R.grade_department(student.class_no)
         homeroom["message"] = homeroom["message"].replace(
             "※ 자동 분류", f"※ 학년부 공유: {homeroom['grade_department']}\n※ 자동 분류")
-    actions = first + actions + last          # 민원대응팀이 할 일: 담당자 문의 -> (악성 대응 조치) -> 회신
+    actions = first + actions + last          # 민원대응팀이 할 일: 담당자 문의 -> (특이 대응 조치) -> 회신
 
     if route == "ESCALATE":
         reasons = "\n".join(f"  - {c['text']} (근거 {', '.join(c['evidence'])})" for c in criteria["met"]) or "  - (자동 판정 가능한 기준 없음, 담당자 확인)"
@@ -401,7 +403,7 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         "llm_judge": judge or None, "llm_used": llm.available,
         "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out) or bool(review["findings"]),
         "text_masked": text, "text_soft": soft, "text_soft_method": soft_method,
-        "history": {"student": history["student"], "same_student": prior, "similar_others": history["similar_others"],
+        "history": {"student": history["student"], "same_student": prior,
                     "recent_closed": history["recent_closed"], "prior_malicious": pm},
         "complaint_id": None,
         "spans": [{"start": a, "end": b, "kind": k, "label": l} for a, b, k, l in sorted(spans)],

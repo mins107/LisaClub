@@ -122,7 +122,7 @@ def _form(v=None, error=""):
 <fieldset><legend>민원 대상 학생 <small>선택</small></legend><div class="fields">
 <label>학생 이름<input type="text" name="student" value="{g('student')}" placeholder="예: 홍길동" style="width:140px"></label>
 <label>학년반<input type="text" name="class_no" value="{g('class_no')}" placeholder="예: 305" maxlength="3" inputmode="numeric" pattern="[1-6][0-9]{{2}}" style="width:100px"></label></div>
-<p class="hint">둘 다 입력하면 같은 학생의 과거 이력(반복 민원, 종결 직후 재접촉, 과거 악성 이력)을 반영합니다. 3학년 5반 → 305, 둘 다 비우면 '학생 미상'입니다.</p></fieldset>
+<p class="hint">둘 다 입력하면 같은 학생의 과거 이력(반복 민원, 종결 직후 재접촉, 과거 특이 이력)을 반영합니다. 3학년 5반 → 305, 둘 다 비우면 '학생 미상'입니다.</p></fieldset>
 <fieldset><legend>접수 정보 <small>선택</small></legend><div class="fields">
 <label>접수 시각<input type="datetime-local" name="received_at" value="{g('received_at')}"></label>
 <label>통화·면담 시간(분)<input type="number" name="call_minutes" min="0" step="1" value="{g('call_minutes')}" style="width:110px"></label></div>

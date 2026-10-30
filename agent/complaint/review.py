@@ -10,7 +10,7 @@ from .retriever import tokenize
 MAX_ROUNDS = 3
 COVER_MIN = 0.35        # 규칙 문구(anchor)의 낱말 중 근거 문장이 담은 비율이 이보다 낮으면 근거가 약하다고 본다
 COVER_GAIN = 0.1        # 재검색 결과가 기존보다 이만큼 더 잘 맞아야 근거로 추가한다
-NEAR_GAP = 0.1          # 악성 반복 유사도가 임계값보다 이만큼 이내로 낮으면 '경계'로 본다
+NEAR_GAP = 0.1          # 특이 반복 유사도가 임계값보다 이만큼 이내로 낮으면 '경계'로 본다
 
 
 def coverage(anchor, text):
@@ -23,14 +23,14 @@ def history_findings(*, route, history, mal_repeat, near_items, student, sim_thr
     """규칙 판정과 이력이 서로 어긋나 보이는 곳을 찾는다. 모두 '사람이 확인' 요청이며 분기는 바꾸지 않는다."""
     out = []
     if student is None and route == "ESCALATE":
-        out.append("학생 정보가 없어 같은 학생의 이력(반복·과거 악성)을 보지 못했습니다. 학생을 확인한 뒤 이력을 다시 확인하세요.")
+        out.append("학생 정보가 없어 같은 학생의 이력(반복·과거 특이)을 보지 못했습니다. 학생을 확인한 뒤 이력을 다시 확인하세요.")
     if near_items:
-        out.append(f"같은 학생의 미해결 악성 특성 민원 {len(near_items)}건이 유사도 임계값({int(sim_threshold * 100)}%) 바로 아래입니다. "
-                   f"같은 사안인지 확인하세요(같으면 이번이 악성 반복 {mal_repeat + len(near_items)}회째).")
+        out.append(f"같은 학생의 미해결 특이 민원 특성 민원 {len(near_items)}건이 유사도 임계값({int(sim_threshold * 100)}%) 바로 아래입니다. "
+                   f"같은 사안인지 확인하세요(같으면 이번이 특이 반복 {mal_repeat + len(near_items)}회째).")
     if mal_repeat == 2 and route != "ESCALATE":
-        out.append("악성 특성이 있는 비슷한 민원이 이번까지 2회입니다. 한 번 더 반복되면 악성 의심으로 분류됩니다.")
+        out.append("특이 민원 특성이 있는 비슷한 민원이 이번까지 2회입니다. 한 번 더 반복되면 특이 민원 의심으로 분류됩니다.")
     if route == "HANDLE" and history.get("prior_malicious"):
-        out.append(f"같은 학생의 과거 악성(특이) 의심 민원이 {history['prior_malicious']}건 있는데 이번에는 일반 처리로 분류했습니다. 응대 단계를 확인하세요.")
+        out.append(f"같은 학생의 과거 특이 민원 의심 민원이 {history['prior_malicious']}건 있는데 이번에는 일반 처리로 분류했습니다. 응대 단계를 확인하세요.")
     if route == "HANDLE" and history.get("recent_closed"):
         out.append(f"종결한 민원(#{history['recent_closed']['id']}) 직후의 재연락인데 일반 처리로 분류했습니다. 종결 사유와 이번 내용이 다른지 확인하세요.")
     return out

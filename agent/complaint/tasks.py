@@ -5,6 +5,7 @@
 """
 import re
 
+from . import counter as CT
 from .rules import DEPT_DESC, UNASSIGNED
 
 SUBJECTS = ["국어", "수학", "영어", "과학", "사회", "한국사", "역사", "도덕", "윤리", "체육", "음악", "미술", "기술", "가정", "정보",
@@ -35,7 +36,7 @@ def team_tasks(text, route, deadline, student, ev_assign=(), ev_due=(), ev_guide
     first, last = [], []
     if route == "REJECTABLE":
         if ev_guide:
-            last.append(_a(PHASE_REPLY, "교직원 개인 연락처는 안내할 수 없고 공식 접수 창구(학교 대표번호·온라인 민원 창구)로 문의하도록 안내",
+            last.append(_a(PHASE_REPLY, f"교직원 개인 연락처는 안내할 수 없고 공식 접수 창구({CT.full_line()})로 문의하도록 안내",
                            ["교직원 개인 연락처 요구"], ev_guide))
         else:
             last.append(_a(PHASE_REPLY, "거부·종결 사유를 민원인에게 통지", ["거부·종결 가능 민원"], []))

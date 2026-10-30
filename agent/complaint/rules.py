@@ -15,7 +15,7 @@ class Rule:
     kind: str          # reject | malicious
     pattern: str
     anchor: str        # 매뉴얼에서 근거를 찾기 위한 질의(매뉴얼 표현 그대로)
-    severity: int = 0  # 악성 유형의 위험도 1~5
+    severity: int = 0  # 특이 유형의 위험도 1~5
     confident: bool = True
 
 
@@ -177,7 +177,7 @@ def detect_malicious(text, repeat_count=1):
 
 
 def urgency(malicious_hits):
-    """악성(특이) 유형의 가장 높은 심각도로 정한다: 5 -> 긴급, 3~4 -> 높음, 2 -> 보통, 그 외 낮음."""
+    """특이 유형의 가장 높은 심각도로 정한다: 5 -> 긴급, 3~4 -> 높음, 2 -> 보통, 그 외 낮음."""
     sev = max([r.severity for r, _, _ in malicious_hits], default=0)
     order = ["낮음", "보통", "높음", "긴급"]
     return order[3 if sev >= 5 else 2 if sev >= 3 else 1 if sev >= 2 else 0]

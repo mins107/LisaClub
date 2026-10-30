@@ -17,7 +17,7 @@ class Settings:
     embed_model: str      # 빈 문자열이면 BM25만 사용
     manual_pdf: str
     database_url: str     # SQLAlchemy 접속 주소 또는 SQLite 파일 경로
-    history_window_days: int    # 반복·악성 이력을 세는 기간(일)
+    history_window_days: int    # 반복·특이 이력을 세는 기간(일)
     recontact_hours: int        # 종결 후 '바로' 연락이 온 것으로 보는 시간
     repeat_sim_threshold: float  # 반복민원으로 볼 유사도 임계값(0~1)
     repeat_sim_samples: int      # LLM에게 유사도를 묻는 횟수(중앙값 사용)

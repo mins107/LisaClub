@@ -10,6 +10,7 @@
 import calendar
 from datetime import date, timedelta
 
+from . import counter as CT
 from .rules import DEPARTMENTS, GRADE_TEMPLATE, UNASSIGNED
 
 LEAD_DAYS = 14           # 늘어나는 달이 시작하기 며칠 전부터 전달하는가(임의 시작값)
@@ -35,7 +36,7 @@ def draft_plan(item, total_cases):
         f"매년 {m}월에는 '{kw}' 관련 문의가 많이 접수됩니다. 문의 전에 아래 내용을 먼저 확인해 주시기 바랍니다.", "",
         f"■ 안내 주제: {kw}" + (f" (함께 문의가 많은 주제: {', '.join(related)})" if related else ""),
         "■ 안내 내용: (담당 부서가 일정·기준·신청 방법 등 구체적인 내용을 채워 주세요)",
-        f"■ 문의: {dept if dept != UNASSIGNED else '학교 민원 접수 창구'} (학교 대표번호)", "",
+        f"■ 문의: {dept if dept != UNASSIGNED else '학교 민원 접수 창구'} ({CT.phone_line()})", "",
         "※ 자동 분석으로 만든 초안입니다. 내용을 확인·보완한 뒤 발송해 주세요."])
     return {"keyword": kw, "related": related, "peak_month": m, "lead_days": LEAD_DAYS, "department": dept,
             "title": f"[가정통신문] {m}월 {kw} 관련 안내", "body": body,

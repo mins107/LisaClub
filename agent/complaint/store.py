@@ -7,13 +7,13 @@
 테이블
   students          민원 대상 학생(이름 + 학년반)
   complaints        처리한 민원 1건 = 1행. 접수 정보 + 분류 결과 + 전체 결과(result_json) + 처리 상태·담임 전달 상태
-  complaint_hits    민원별로 걸린 거부·악성 규칙
+  complaint_hits    민원별로 걸린 거부·특이 규칙
   complaint_events  민원별 처리 경과(접수, 상태 변경, 메모, 담임 전달)
 
 이력 판단 기준(매뉴얼 근거는 pipeline.py·rules.py 참고)
   동일·유사 반복      같은 학생의 과거 민원 중 내용이 비슷한 것(window_days 이내)
   종결 직후 재접촉    같은 학생의 종결(거부·종결 가능) 민원이 recontact_hours 이내에 있음
-  과거 악성 이력      같은 학생의 악성(특이) 의심 민원 건수(window_days 이내)
+  과거 특이 이력      같은 학생의 특이 민원 의심 민원 건수(window_days 이내)
 """
 import json
 import os
@@ -31,7 +31,6 @@ from .rules import DEPT_NAMES, UNASSIGNED
 from .soften import mask_rough
 
 SAME_STUDENT_SIM = 0.3    # 같은 학생의 과거 민원이 "동일·유사"로 보이는 기준(자카드 유사도)
-OTHER_STUDENT_SIM = 0.5   # 다른 학생의 민원은 더 비슷할 때만 참고용으로 보여 준다
 SCAN_LIMIT = 500          # 내용 비교는 기간 안의 최근 N건만 (학교 규모에서는 충분)
 
 STATUSES = ["접수", "처리 중", "완료", "이첩"]      # 처리 상태. 완료·이첩은 처리가 끝난 상태
@@ -155,11 +154,11 @@ def _jaccard(a: str, b: str) -> float:
     return len(A & B) / len(A | B) if A and B else 0.0
 
 
-MAL_TRAIT_SEVERITY = 3    # 반복민원으로 셀 민원의 악성 특성: 심각도 3 이상이면서 확신 있는 규칙이 걸림(팀 결정)
+MAL_TRAIT_SEVERITY = 3    # 반복민원으로 셀 민원의 특이 민원 특성: 심각도 3 이상이면서 확신 있는 규칙이 걸림(팀 결정)
 
 
 def malicious_trait(hits):
-    """분류 결과의 악성 유형 목록(hit dict)에 '악성 특성'이 있는지. 심각도 3 이상이고 확신 낮은 규칙(오탐 가능)이 아닌 것만 인정한다."""
+    """분류 결과의 특이 유형 목록(hit dict)에 '특이 민원 특성'이 있는지. 심각도 3 이상이고 확신 낮은 규칙(오탐 가능)이 아닌 것만 인정한다."""
     return any((h.get("severity") or 0) >= MAL_TRAIT_SEVERITY and h.get("confident", True) for h in hits or [])
 
 
@@ -230,7 +229,7 @@ def _engine(url):
 class Store:
     def __init__(self, target=":memory:", window_days=180, recontact_hours=24):
         """target: DATABASE_URL, SQLite 파일 경로, 또는 ':memory:'.
-        window_days: 반복·악성 이력을 세는 기간. 매뉴얼에 기간 규정은 없고, 지원 요청 보고서 작성 예시가 '6개월간'이다.
+        window_days: 반복·특이 이력을 세는 기간. 매뉴얼에 기간 규정은 없고, 지원 요청 보고서 작성 예시가 '6개월간'이다.
         recontact_hours: 종결 후 '바로' 연락이 온 것으로 보는 시간. 매뉴얼에 기준이 없어 임의로 정한 값이다."""
         url = _url(target)
         self.engine = _engine(url)
@@ -287,10 +286,9 @@ class Store:
 
         반환: {"student": 학생 요약|None,
                "same_student": 같은 학생의 동일·유사 민원(기간 이내),
-               "similar_others": 다른 학생의 매우 유사한 민원(참고용),
                "recent_closed": 종결 직후 재접촉이면 그 종결 민원, 아니면 None,
-               "prior_malicious": 같은 학생의 악성 의심 민원 건수(기간 이내),
-               "repeat_candidates": 같은 학생의 미해결(접수·처리 중) 민원 중 악성 특성이 있는 것(내용 포함, 유사도는 아직 안 잼)}
+               "prior_malicious": 같은 학생의 특이 민원 의심 민원 건수(기간 이내),
+               "repeat_candidates": 같은 학생의 미해결(접수·처리 중) 민원 중 특이 민원 특성이 있는 것(내용 포함, 유사도는 아직 안 잼)}
         """
         now = now or _now()
         with self.engine.connect() as c:
@@ -309,7 +307,7 @@ class Store:
                                                            complaints.c.route == "ESCALATE")).scalar()
                 summary = {"name": student.name, "class_no": student.class_no, "total": total, "escalated": esc,
                            "last_at": _local(last)}
-        same, others, recent_closed, malicious, candidates = [], [], None, 0, []
+        same, recent_closed, malicious, candidates = [], None, 0, []
         recontact_from = now - timedelta(hours=self.recontact_hours)
         for r in rows:
             sim = _jaccard(r["text_masked"], text_)
@@ -327,9 +325,7 @@ class Store:
                     recent_closed = item
                 if sim >= SAME_STUDENT_SIM:
                     same.append(item)
-            elif sim >= OTHER_STUDENT_SIM:
-                others.append(item)
-        return {"student": summary, "same_student": same, "similar_others": others[:5],
+        return {"student": summary, "same_student": same,
                 "recent_closed": recent_closed, "prior_malicious": malicious, "repeat_candidates": candidates}
 
     def save(self, result, student=None, received_at=None, call_minutes=None, closed_by_repeat=False):
@@ -496,7 +492,7 @@ class Store:
                 "departments": self.department_stats(now)}
 
     def department_stats(self, now=None):
-        """부서별 민원 현황. 부서마다 접수·진행 중·처리 끝(완료·이첩)·기한 초과·기한 넘겨 끝낸 건·평균 처리일·반복 민원·악성 의심·주요 주제."""
+        """부서별 민원 현황. 부서마다 접수·진행 중·처리 끝(완료·이첩)·기한 초과·기한 넘겨 끝낸 건·평균 처리일·반복 민원·특이 민원 의심·주요 주제."""
         now = now or _now()
         with self.engine.connect() as c:
             rows = c.execute(select(complaints.c.created_at, complaints.c.department, complaints.c.status, complaints.c.deadline,

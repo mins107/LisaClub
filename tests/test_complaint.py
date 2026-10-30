@@ -66,10 +66,9 @@ def test_store_identifies_student_by_name_and_class():
     assert len(h["same_student"]) == 2 and h["student"]["total"] == 2 and h["student"]["escalated"] == 1
     assert h["prior_malicious"] == 1
     h = s.find_history(other_class, t)                         # 이름이 같아도 학년반이 다르면 다른 학생
-    assert h["student"] is None and h["same_student"] == [] and len(h["similar_others"]) == 2
-    assert h["similar_others"][0]["student"] == "홍길동(305)"
+    assert h["student"] is None and h["same_student"] == []                   # 다른 학생의 민원은 이력에 넣지 않는다
     s.save(_fake_result("체험학습 도시락 문의"), None)          # 학생 미상도 저장된다
-    assert s.find_history(None, "체험학습 도시락 문의")["similar_others"][0]["student"] is None
+    assert s.find_history(None, "체험학습 도시락 문의")["same_student"] == []
 
 
 def _make_old_db(path, rows):
@@ -98,7 +97,7 @@ def test_store_migrates_old_schema(tmp_path):
     backups = glob.glob(full + ".bak-*")
     assert len(backups) == 1 and sqlite3.connect(backups[0]).execute("SELECT COUNT(*) FROM complaints").fetchone()[0] == 2
     s.save(_fake_result("문의"), None)
-    assert s.find_history(None, "문의")["similar_others"][0]["id"] == 1
+    assert s.find_history(None, "문의")["same_student"] == []
 
 
 def test_store_history_window_and_recontact():
@@ -162,7 +161,7 @@ def test_no_student_saved_without_repeat_judgement():
     t = "수행평가 점수 채점 기준을 알려 주세요"
     outs = [run(t, None, retr, store, llm)[0] for _ in range(4)]
     assert [o["route"] for o in outs] == ["HANDLE"] * 4         # 학생을 모르면 반복 민원으로 보지 않는다
-    assert all(o["complaint_id"] for o in outs) and len(store.find_history(None, t)["similar_others"]) == 4
+    assert all(o["complaint_id"] for o in outs) and store.find_history(None, t)["same_student"] == []
     stu = make_student("마바", "104")
     res, _ = run(t, stu, retr, store, llm, save=False)          # 시험 입력은 저장하지 않는다
     assert res["complaint_id"] is None and store.find_history(stu, t)["student"] is None
@@ -191,7 +190,7 @@ def test_web_classify_and_validation(tmp_path):
         assert "작성자 찾기" not in form_page and "api/extract" not in form_page         # 자동 찾기는 없앴다
         body = urllib.parse.urlencode({"text": "칼 들고 찾아가서 가만 안 둔다", "nosave": "1"}).encode()
         page = urllib.request.urlopen(base + "/", body).read().decode()
-        assert "악성 의심" in page and "evidence_highlighted.pdf" in page and "지금 할 일" in page
+        assert "특이 민원 의심" in page and "evidence_highlighted.pdf" in page and "지금 할 일" in page
         assert "민원 유형 근거" in page and "처리 절차 근거" in page                      # 근거를 유형/절차로 구분
         assert "흥분도" not in page and "매뉴얼 원본 화면 보기" not in page and "data:image/png" not in page
         pdf_url = base + "/cases/" + page.split("/cases/")[1].split('"')[0]
@@ -233,17 +232,17 @@ def test_history_rules_from_manual():
     assert res["route"] == "REJECTABLE" and any(h["key"] == "recontact" for h in res["reject"])
     assert any(e["printed_page"] == "7" and "바로 연락" in e["text"] for e in res["evidence"])
     assert res["needs_human_review"] and res["history"]["recent_closed"]
-    # 과거 악성 이력 -> 재접촉 대응 안내(PDF 49쪽)와 사람 확인 요구. 분기는 현재 민원 내용으로만 정해진다.
+    # 과거 특이 이력 -> 재접촉 대응 안내(PDF 49쪽)와 사람 확인 요구. 분기는 현재 민원 내용으로만 정해진다.
     b = make_student("김철수", "206")
     run("칼 들고 찾아가서 가만 안 둔다", b, retr, store, llm)
     res, _ = run("체험학습 일정이 궁금합니다", b, retr, store, llm)
     assert res["route"] == "HANDLE" and res["history"]["prior_malicious"] == 1 and res["needs_human_review"]
-    assert any("재접촉 1차" in x["text"] and x["evidence"] for x in res["actions"])
-    res, _ = run("또 가만 안 둔다", b, retr, store, llm)                    # 악성 이력 1건 -> 1차 대응, 접촉 제한 검토 함께 안내
-    assert res["route"] == "ESCALATE" and any("재접촉 1차" in x["text"] for x in res["actions"])
+    assert any("과거 특이 이력 1건" in x["text"] and x["evidence"] for x in res["actions"])
+    res, _ = run("또 가만 안 둔다", b, retr, store, llm)                    # 특이 이력 1건 -> 1차 대응, 접촉 제한 검토 함께 안내
+    assert res["route"] == "ESCALATE" and any("과거 특이 이력 1건" in x["text"] for x in res["actions"])
     assert any("출입·면담 제한" in x["text"] for x in res["actions"])
-    res, _ = run("또 가만 안 둔다", b, retr, store, llm)                    # 악성 이력 2건 -> 2차(상급자 응대)
-    assert res["history"]["prior_malicious"] == 2 and any("재접촉 2차 이상" in x["text"] for x in res["actions"])
+    res, _ = run("또 가만 안 둔다", b, retr, store, llm)                    # 특이 이력 2건 -> 2차(상급자 응대)
+    assert res["history"]["prior_malicious"] == 2 and any("과거 특이 이력 2건 이상" in x["text"] for x in res["actions"])
 
 
 def _handoff_result(text="숙제 문의 확인해 주세요"):
@@ -393,7 +392,7 @@ def test_benign_repeat_is_closable_but_not_malicious():
     t = "수행평가 점수 채점 기준을 알려 주세요"
     res = [run(t, make_student("사아", "109"), retr, store, llm)[0] for _ in range(5)]
     assert [r["route"] for r in res[:3]] == ["HANDLE", "HANDLE", "REJECTABLE"]
-    assert all(r["route"] != "ESCALATE" and r["malicious_repeat"]["count"] == 1 for r in res)   # 단순 반복은 악성으로 세지 않는다
+    assert all(r["route"] != "ESCALATE" and r["malicious_repeat"]["count"] == 1 for r in res)   # 단순 반복은 특이으로 세지 않는다
 
 
 @needs_pdf
@@ -410,7 +409,7 @@ def test_malicious_repeat_counts_only_open_similar_malicious_trait(monkeypatch):
     ids = [run("칼 들고 찾아가서 가만 안 둔다", stu, retr, store, llm)[0]["complaint_id"] for _ in range(2)]
     benign = "수행평가 점수 채점 기준을 알려 주세요"
     r = run(benign, stu, retr, store, llm, save=False)[0]
-    assert r["malicious_repeat"]["count"] == 3 and r["route"] == "ESCALATE"               # 유사한 악성 특성 미해결 2건 + 이번
+    assert r["malicious_repeat"]["count"] == 3 and r["route"] == "ESCALATE"               # 유사한 특이 민원 특성 미해결 2건 + 이번
     store.set_status(ids[0], "완료")
     r = run(benign, stu, retr, store, llm, save=False)[0]
     assert r["malicious_repeat"]["count"] == 2 and r["route"] != "ESCALATE"               # 해결된 민원은 제외
@@ -691,7 +690,7 @@ def test_pipeline_mentions_notice_in_season_and_web_flow(tmp_path):
 
 
 def _esc_result(**kw):
-    base = {"route": "ESCALATE", "route_label": "악성 의심", "department": "교수학습지원부", "handler": "관리자", "repeat_count": 1,
+    base = {"route": "ESCALATE", "route_label": "특이 민원 의심", "department": "교수학습지원부", "handler": "관리자", "repeat_count": 1,
             "student": "홍길동(305)", "text_masked": "수행평가 점수를 올려 놔라. 안 그러면 가만 안 둔다.", "complaint_id": 7, "actions": [],
             "malicious": [{"kind": "malicious", "key": "threat", "label": "협박", "severity": 4, "matched": ["가만 안 둔다"], "confident": True}],
             "history": {"same_student": [], "prior_malicious": 0}}
@@ -961,10 +960,10 @@ def test_review_loop_checks_history_and_boosts_weak_evidence():
                  mal_repeat=1, near_items=[], student=None, sim_threshold=0.8)
     assert out["added_evidence"] == ["E2"] and "E2" in hits[0]["evidence"] and not out["llm_used"]       # LLM 없이 규칙 재검색으로 보강
     assert out["rounds"][0]["weak"] == 1 and len(out["rounds"]) <= RV.MAX_ROUNDS
-    assert [f["kind"] for f in out["findings"]] == ["history"] and "과거 악성" in out["findings"][0]["text"]   # 근거는 보강돼 evidence 지적 없음
+    assert [f["kind"] for f in out["findings"]] == ["history"] and "과거 특이" in out["findings"][0]["text"]   # 근거는 보강돼 evidence 지적 없음
     f = RV.history_findings(route="HANDLE", history={}, mal_repeat=2, near_items=[{}], student=None, sim_threshold=0.8)
     assert any("임계값" in t for t in f) and any("2회" in t for t in f)
-    assert RV.history_findings(route="ESCALATE", history={}, mal_repeat=1, near_items=[], student=None, sim_threshold=0.8)    # 학생 미상 악성 의심
+    assert RV.history_findings(route="ESCALATE", history={}, mal_repeat=1, near_items=[], student=None, sim_threshold=0.8)    # 학생 미상 특이 민원 의심
 
 
 @needs_pdf

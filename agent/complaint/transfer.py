@@ -91,7 +91,7 @@ def checklist(result):
     pm = hist.get("prior_malicious", 0)
     r2 = ["학교장의 퇴거명령·민원 제한 조치 여부와 그 이후의 불응·지속 제기는 시스템에 기록이 없어 담당자가 확인해야 합니다"]
     if pm:
-        r2.append(f"참고: 같은 학생의 과거 악성(특이) 의심 민원이 {pm}건 있습니다")
+        r2.append(f"참고: 같은 학생의 과거 특이 민원 의심 민원이 {pm}건 있습니다")
     out.append(("확인 필요", r2))
 
     # 3) 처벌 가능한 중대 사안

@@ -34,7 +34,7 @@ def annotate(pdf_path, used, out_dir):
     return out_pdf
 
 
-ROUTE_SHORT = {"REJECTABLE": "거부·종결 가능", "HANDLE": "일반 처리", "ESCALATE": "악성 의심 · 이첩 검토"}
+ROUTE_SHORT = {"REJECTABLE": "거부·종결 가능", "HANDLE": "일반 처리", "ESCALATE": "특이 민원 의심 · 이첩 검토"}
 ROUTE_COLOR = {"REJECTABLE": "var(--amber)", "HANDLE": "var(--green)", "ESCALATE": "var(--red)"}
 URGENCY_CLASS = {"낮음": "low", "보통": "mid", "높음": "high", "긴급": "crit"}
 
@@ -269,17 +269,6 @@ def _pattern_line(result):
     return "", "반복 패턴 없음 (처음 접수한 내용입니다)"
 
 
-def _similar_others_box(result):
-    """다른 학생의 매우 유사한 민원(참고용). 자세히 보기 안에 둔다."""
-    rows = (result.get("history") or {}).get("similar_others", [])
-    if not rows:
-        return ""
-    body = "".join(f'<tr><td>#{x["id"]}</td><td>{x["created_at"]}</td><td>{html.escape(x["student"] or "학생 미상")}</td>'
-                   f'<td>{x["similarity"]:.0%}</td><td>{html.escape(x["snippet"])}</td></tr>' for x in rows)
-    return (f'<div class="box"><h3>다른 학생의 비슷한 민원 <small>(참고)</small></h3><div class="tbl"><table><tr><th>번호</th><th>접수일</th>'
-            f'<th>학생</th><th>유사도</th><th>내용</th></tr>{body}</table></div></div>')
-
-
 def _evidence(result, pdf_href):
     """매뉴얼 근거: '민원 유형 근거'와 '처리 절차 근거'를 나란히 보여 준다(근거 번호와 매뉴얼 문장만)."""
     groups = {"type": [], "proc": []}
@@ -359,7 +348,7 @@ def _history_card(result):
     kind, pattern = _pattern_line(result)
     icon, color = {"warn": ("!", "var(--red)"), "note": ("2", "var(--amber)")}.get(kind, ("✓", "var(--green)"))
     a = h.get("student")
-    sub = (f'{html.escape(a["name"])}({html.escape(a["class_no"])}) 학생의 이전 민원 {a["total"]}건 · 악성 의심 {a["escalated"]}건' if a else
+    sub = (f'{html.escape(a["name"])}({html.escape(a["class_no"])}) 학생의 이전 민원 {a["total"]}건 · 특이 민원 의심 {a["escalated"]}건' if a else
            (f'{html.escape(result["student"])} 학생의 이전 민원 없음' if result.get("student") else "학생 정보가 없어 학생 기준 이력은 보지 않았습니다"))
     items = "".join(f'<li>{html.escape(x["snippet"])}<div class="m">#{x["id"]} · {x["created_at"][:10]} · '
                     f'{html.escape(ROUTE_SHORT.get(x["route"], x["route"]))}</div></li>' for x in h.get("same_student", [])[:4])
@@ -368,7 +357,7 @@ def _history_card(result):
         rc = h["recent_closed"]
         flags.append(f'종결한 민원(#{rc["id"]}) 직후 다시 연락함')
     if h.get("prior_malicious"):
-        flags.append(f'과거 악성 의심 민원 {h["prior_malicious"]}건')
+        flags.append(f'과거 특이 민원 의심 민원 {h["prior_malicious"]}건')
     return (f'<section class="cd-card o5"><div class="cd-label">과거 이력</div>'
             f'<div class="cd-pattern"><i style="--k:{color}">{icon}</i><span>{html.escape(pattern)}</span></div>'
             f'<p class="cd-sub">{sub}</p>{"".join(f"<div class=cd-flag>{html.escape(f)}</div>" for f in flags)}'
@@ -418,7 +407,7 @@ def render_body(result, pdf_href=None, homeroom_footer="", transfer_href="", dea
             f'<div class="rrow"><div class="sec-title">거부·종결 가능 사유</div>{_chips(result["reject"], "reject", tips=_tips(result))}</div>'
             f'<div class="rrow"><div class="sec-title">특이민원 유형</div>{_chips(result["malicious"], "mal", True, _tips(result))}</div>'
             f'{f"""<div class="rrow"><div class="sec-title">참고 (맥락 확인 필요)</div>{notes}</div>""" if notes else ""}</div>'
-            f'{_similar_others_box(result)}{_review_box(result)}{timeline_html}'
+            f'{_review_box(result)}{timeline_html}'
             f'<div class="box">{_evidence(result, pdf_href)}</div>'
             f'<p class="cd-foot">자동 판정은 후보 제시용이며 최종 판단은 학교장(민원대응팀)이 합니다.</p></details>')
     return (f'<div class="cd"><div class="cd-main">{_content_card(result)}{_reply_card(result)}{more}</div>'

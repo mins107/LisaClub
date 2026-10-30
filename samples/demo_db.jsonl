@@ -30,10 +30,10 @@
 {"student": "어도현", "class_no": "311", "text": "급식 국에서 머리카락이 나왔습니다. 확인해 주세요.", "days_ago": 9, "status": "접수", "done_after_days": 0, "actor": "", "memo": "", "homeroom_sent": false}
 {"student": "곽서율", "class_no": "214", "text": "국어 수행평가 점수 이의 신청을 하고 싶습니다. 이유를 알려 주세요.", "days_ago": 25, "status": "완료", "done_after_days": 3, "actor": "박교사", "memo": "결과 안내함", "homeroom_sent": false}
 {"student": "곽서율", "class_no": "214", "text": "국어 수행평가 점수 이의 신청을 다시 하고 싶습니다. 이유를 알려 주세요.", "days_ago": 15, "status": "완료", "done_after_days": 2, "actor": "박교사", "memo": "결과 안내함", "homeroom_sent": false}
-{"student": "곽서율", "class_no": "214", "text": "국어 수행평가 점수 이의 신청을 또 하고 싶습니다. 이유를 알려 주세요.", "days_ago": 5, "status": "완료", "done_after_days": 0, "actor": "교감", "memo": "3회 반복 문의, 합리적 답변 후 종결 검토(악성 특성 없음)", "homeroom_sent": false}
+{"student": "곽서율", "class_no": "214", "text": "국어 수행평가 점수 이의 신청을 또 하고 싶습니다. 이유를 알려 주세요.", "days_ago": 5, "status": "완료", "done_after_days": 0, "actor": "교감", "memo": "3회 반복 문의, 합리적 답변 후 종결 검토(특이 민원 특성 없음)", "homeroom_sent": false}
 {"student": "기하준", "class_no": "312", "text": "선생님 개인 번호 좀 알려주세요. 카톡으로 상담하고 싶어요.", "days_ago": 3, "status": "완료", "done_after_days": 0, "actor": "김교사", "memo": "개인 연락처 안내 불가, 공식 창구 안내", "homeroom_sent": false}
 {"student": "범이레", "class_no": "215", "text": "담임 때문에 우리 애가 학교 가기 싫대요!! 이런 무능한 교사는 자격 없어요, 가만 안 둔다.", "days_ago": 8, "status": "처리 중", "done_after_days": 0, "actor": "교감", "memo": "관리자 면담 예정", "homeroom_sent": false}
 {"student": "범이레", "class_no": "215", "text": "담임 때문에 우리 애가 학교 가기 싫대요!! 이런 무능한 교사는 자격 없어요, 가만 안 둔다. 사과하세요.", "days_ago": 4, "status": "처리 중", "done_after_days": 0, "actor": "교감", "memo": "관리자 면담 예정", "homeroom_sent": false}
-{"student": "범이레", "class_no": "215", "text": "담임 때문에 우리 애가 학교 가기 싫대요!! 이런 무능한 교사는 자격 없어요, 가만 안 둔다. 빨리 사과하세요.", "days_ago": 1, "status": "처리 중", "done_after_days": 0, "actor": "교감", "memo": "유사 악성 민원 3회째, 이첩 검토", "homeroom_sent": false}
+{"student": "범이레", "class_no": "215", "text": "담임 때문에 우리 애가 학교 가기 싫대요!! 이런 무능한 교사는 자격 없어요, 가만 안 둔다. 빨리 사과하세요.", "days_ago": 1, "status": "처리 중", "done_after_days": 0, "actor": "교감", "memo": "유사 특이 민원 3회째, 이첩 검토", "homeroom_sent": false}
 {"student": "맹다온", "class_no": "113", "text": "체육 선생님이 우리 애를 차별합니다. 가만 안 둘 겁니다.", "days_ago": 6, "status": "처리 중", "done_after_days": 0, "actor": "교감", "memo": "관리자 면담 예정", "homeroom_sent": false}
 {"student": "맹다온", "class_no": "113", "text": "다음 달 급식 식단표는 어디서 볼 수 있나요?", "days_ago": 1, "status": "접수", "done_after_days": 0, "actor": "", "memo": "", "homeroom_sent": false}
