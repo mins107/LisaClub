@@ -323,4 +323,5 @@ def render_detail(c, pdf_href=None, new=False, error=""):
             f' · 최근 갱신 {html.escape(c["updated_at"] or c["created_at"])}</span></div>')
     panel = (f'<div class="cols"><div class="col"><div class="box"><h2>처리 상태</h2>{_stepper(c["status"])}{due}{done}{rec}</div></div>'
              f'<div class="col"><div class="box"><h2>처리 경과 <small>({len(c["events"])}건)</small></h2>{_timeline(c["events"])}</div></div></div>')
-    return head + banner + err + panel + render_body(c["result"], pdf_href, footer)
+    return head + banner + err + panel + render_body(c["result"], pdf_href, footer,
+                                                       f"/complaints/{cid}/transfer.docx" if c["route"] == "ESCALATE" or c["status"] == "이첩" else "")

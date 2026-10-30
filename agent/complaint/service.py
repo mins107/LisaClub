@@ -14,6 +14,7 @@ from .retriever import Retriever
 from .schedule import SchoolCalendar
 from .settings import load_settings
 from .store import Store, make_student
+from .transfer import build_transfer, to_docx
 
 
 class ComplaintService:
@@ -28,6 +29,7 @@ class ComplaintService:
         self.retr = Retriever(self.index, embed)
         self.store = Store(db or s.database_url, s.history_window_days, s.recontact_hours)
         self.calendar = SchoolCalendar.from_settings(s)
+        self.school_name = s.school_name
         self._lock = threading.Lock()      # sqlite 이력 갱신을 요청 간에 직렬화
 
     def classify(self, text, student=None, class_no=None, received_at=None, call_minutes=None, save=True):
@@ -40,6 +42,10 @@ class ComplaintService:
                        received_at=received_at or None, call_minutes=call_minutes, save=save,
                        calendar=self.calendar)
 
+    def transfer_report(self, complaint, path):
+        """저장된 민원(store.get_complaint 결과)의 이첩 보고서를 Word 파일로 쓴다. 처리 경과가 최신으로 들어간다."""
+        return to_docx(build_transfer(complaint["result"], complaint, self.school_name), path)
+
     def save_outputs(self, result, used, out_dir):
         """근거 형광펜 PDF, result.json, report.html을 out_dir에 쓴다."""
         os.makedirs(out_dir, exist_ok=True)
@@ -47,5 +53,7 @@ class ComplaintService:
             annotate(self.pdf, used, out_dir)
         with open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
+        if result["route"] == "ESCALATE":
+            to_docx(build_transfer(result, school_name=self.school_name), os.path.join(out_dir, "transfer_report.docx"))
         with open(os.path.join(out_dir, "report.html"), "w", encoding="utf-8") as f:
             f.write(render_page(result, pdf_href="evidence_highlighted.pdf" if used else None))

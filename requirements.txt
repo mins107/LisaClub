@@ -5,3 +5,4 @@ rank_bm25>=0.2.2
 openai>=1.40.0      # Ollama 등 OpenAI 호환 서버용 클라이언트
 numpy
 sqlalchemy>=2.0     # 민원 DB. 외부 DB는 psycopg(PostgreSQL), pymysql(MySQL) 등 드라이버를 추가로 설치
+python-docx>=1.1   # 상위기관 이첩 보고서(.docx) 작성

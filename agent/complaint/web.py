@@ -14,7 +14,7 @@ import re
 import uuid
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import quote, parse_qs, urlparse
 
 from .analytics import season_report
 from .dashboard import DASH_CSS, render_dashboard, render_detail, render_season
@@ -177,6 +177,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/notices":
             return self._json(200, [{**p, "start": p["start"].isoformat(), "end": p["end"].isoformat()}
                                     for p in notice_status(self.service.store.list_notice_plans())])
+        m = re.match(r"^/complaints/(\d+)/transfer\.docx$", path)
+        if m:
+            return self._transfer_docx(int(m.group(1)))
         m = re.match(r"^/cases/([^/]+)/([^/]+)$", path)
         if m and CASE_ID.match(m.group(1)) and m.group(2) in FILES:
             f = os.path.join(self.out_root, m.group(1), m.group(2))
@@ -252,6 +255,23 @@ class Handler(BaseHTTPRequestHandler):
         notice = ('<a class="back" href="/">← 대시보드로</a><div class="box" style="margin-top:10px"><b>시험 입력입니다.</b> '
                   'DB에 저장하지 않아 대시보드에 나타나지 않고 처리 경과도 기록할 수 없습니다.</div>')
         self._send(200, _layout(notice + render_body(res, self._pdf_href(case_id))))
+
+    def _transfer_docx(self, cid):
+        c = self.service.store.get_complaint(cid)
+        if c is None:
+            return self._not_found()
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "transfer.docx")
+            self.service.transfer_report(c, f)
+            data = open(f, "rb").read()
+        name = quote(f"특이민원_지원요청보고서_{cid}.docx")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{name}")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _post_notice_sent(self, pid):
         try:

@@ -182,6 +182,24 @@ def _todo(result):
     return f'<ol class="phases">{"".join(out)}</ol>'
 
 
+def _transfer_box(result, href):
+    """상위기관 이첩: 매뉴얼 12쪽 이첩 기준 체크리스트에서 어느 항목에 해당하는지와 그 이유, 보고서(.docx) 내려받기."""
+    from .transfer import STATE_MARK, build_transfer
+    t = build_transfer(result)
+    rows = "".join(
+        f'<li class="ck-{"y" if c["state"] in ("해당", "해당 가능") else "n"}"><b>{STATE_MARK[c["state"]]} {c["no"]}. {html.escape(c["state"])}</b> '
+        f'{html.escape(c["text"])}<div class="sm">{"<br>".join(html.escape(r) for r in c["reasons"])}</div></li>' for c in t["checklist"])
+    why = "<br>".join(html.escape(x) for x in t["reason_lines"])
+    link = (f'<a class="btn" href="{html.escape(href)}">이첩 보고서(.docx) 내려받기</a>' if href else
+            '<span class="foot">저장된 민원의 상세 화면에서 보고서 파일을 내려받을 수 있습니다.</span>')
+    return (f'<div class="box"><h3>상위기관 이첩 검토 (매뉴얼 12쪽 이첩 기준 · 55쪽 보고서 서식)</h3>'
+            f'<div class="banner" style="margin-bottom:8px"><b>이첩 사유</b><br>{why}</div>'
+            f'<style>.ckl{{list-style:none;padding:0;margin:0}}.ckl li{{padding:7px 10px;border-radius:8px;margin:4px 0;border:1px solid var(--border)}}'
+            f'.ckl li.ck-y{{background:color-mix(in srgb,var(--red) 10%,transparent);border-color:var(--red)}}.ckl .sm{{font-size:.84em;color:var(--muted);margin-top:2px}}</style>'
+            f'<ul class="ckl">{rows}</ul>'
+            f'<p class="foot">■ 해당 · ▲ 해당 가능(사람이 확인) · □ 확인 필요(학교 기록이 필요한 항목) · － 해당 없음. 학교장이 최종 판단합니다.</p>{link}</div>')
+
+
 def _schedule_note(sc):
     """학사일정 문의 안내 한 줄. 일정 API로 만든 초안인지, 왜 못 만들었는지 알려 준다."""
     if not sc:
@@ -253,7 +271,7 @@ def _homeroom_box(result, footer=""):
             f'<pre class="hr-msg" id="hr-msg">{html.escape(h["message"])}</pre></div>')
 
 
-def render_body(result, pdf_href=None, homeroom_footer=""):
+def render_body(result, pdf_href=None, homeroom_footer="", transfer_href=""):
     """분류 결과 화면: 요약 -> 지금 할 일 -> (원문·사유·이력·초안 | 매뉴얼 근거). 웹 페이지와 report.html이 함께 쓴다."""
     route, color = result["route"], ROUTE_COLOR[result["route"]]
     urg = result["urgency"]
@@ -269,9 +287,7 @@ def render_body(result, pdf_href=None, homeroom_footer=""):
     legend = "".join(f'<span><mark style="background:{CSS[k]}">&nbsp;&nbsp;&nbsp;</mark> {n}</span>'
                      for k, n in ROLE_NAME.items() if k in ("reject", "malicious"))
     copy = lambda i: f'<button type="button" class="btn" data-copy="{i}">복사</button>'  # noqa: E731
-    transfer = (f'<details class="drawer"><summary>교육(지원)청 이첩 보고서 초안</summary><div class="drawer-body">'
-                f'{copy("transfer-text")}<pre id="transfer-text" style="margin-top:8px">{html.escape(result["transfer_doc"])}'
-                f'</pre></div></details>') if result["transfer_doc"] else ""
+    transfer = _transfer_box(result, transfer_href) if result["route"] == "ESCALATE" or transfer_href else ""
     return f"""
 <section class="summary" id="result" style="--c:{color}"><div class="sum-head"><span class="badge">{ROUTE_SHORT[route]}</span>
 <span class="sum-label">{html.escape(result['route_label'])}</span></div>{review}

@@ -659,3 +659,70 @@ def test_pipeline_mentions_notice_in_season_and_web_flow(tmp_path):
         assert next(n for n in again if n["id"] == plan["id"])["sends"][0]["actor"] == "김교사"
     finally:
         srv.shutdown()
+
+
+def _esc_result(**kw):
+    base = {"route": "ESCALATE", "route_label": "악성 의심", "department": "교수학습지원부", "handler": "관리자", "repeat_count": 1,
+            "student": "홍길동(305)", "text_masked": "수행평가 점수를 올려 놔라. 안 그러면 가만 안 둔다.", "complaint_id": 7, "actions": [],
+            "malicious": [{"kind": "malicious", "key": "threat", "label": "협박", "severity": 4, "matched": ["가만 안 둔다"], "confident": True}],
+            "history": {"same_student": [], "prior_malicious": 0}}
+    base.update(kw)
+    return base
+
+
+def test_transfer_checklist_selects_matching_criteria():
+    from agent.complaint import transfer as TR
+    cl = {c["no"]: c for c in TR.checklist(_esc_result())}
+    assert len(cl) == 5 and cl[1]["text"].startswith("합리적인 답변을 하고 3회 이상")
+    assert cl[3]["state"] == "해당" and "협박" in cl[3]["reasons"][0]                # 처벌 가능한 중대 사안
+    assert cl[1]["state"] == "해당 가능" and "위력" in cl[1]["reasons"][0]            # 협박 = 위력 행사 가능성
+    assert cl[2]["state"] == cl[4]["state"] == "확인 필요"                            # 학교 기록이 필요한 항목은 단정하지 않는다
+    prior = [{"id": 3, "created_at": "2026-08-01 10:00", "snippet": "점수 이의", "closed": True}]
+    rep = _esc_result(repeat_count=3, malicious=[], history={"same_student": prior, "prior_malicious": 1})
+    cl = {c["no"]: c for c in TR.checklist(rep)}
+    assert cl[1]["state"] == "해당" and "#3" in cl[1]["reasons"][0] and cl[3]["state"] == "해당 없음" and cl[5]["state"] == "해당 가능"
+    t = TR.build_transfer(rep)
+    assert t["chosen"] == [1, 5] and "1번, 5번" in t["reason_lines"][0] and any("2026-08-01" in l for l in t["history_lines"])
+    assert any("법적 조치" in x for x in TR.build_transfer(_esc_result())["request_lines"])         # 기준 3번 -> 법적 조치 협의 요청
+    assert "가만 안 둔다" in TR.checklist(_esc_result(malicious=[{"key": "threat", "label": "협박", "severity": 4, "matched": "가만 안 둔다"}]))[2]["reasons"][0]
+    none = TR.build_transfer(_esc_result(malicious=[]))
+    assert none["chosen"] == [] and "직접 적어" in none["reason_lines"][0]
+
+
+def test_transfer_docx_follows_form(tmp_path):
+    from docx import Document
+    from agent.complaint import transfer as TR
+    t = TR.build_transfer(_esc_result(), school_name="가락고등학교")
+    assert t["category"] == "교무/학사"
+    f = TR.to_docx(t, str(tmp_path / "r.docx"))
+    d = Document(f)
+    text = "\n".join(p.text for p in d.paragraphs) + "\n".join(c.text for tb in d.tables for r in tb.rows for c in r.cells)
+    for label in ("특이민원 관련 지원 요청 보고서", "학교명", "가락고등학교", "제기대상 분류", "☑ 교무/학사", "☐ 기타", "민원관련 학생", "홍길동",
+                  "학급정보", "3학년 5반(305)", "보호자", "민원제기 및 처리내용", "이첩 사유", "교육(지원)청", "이첩 기준 체크리스트", "선택된 기준"):
+        assert label in text, label
+
+
+@needs_pdf
+def test_web_transfer_report_download(tmp_path):
+    from agent.complaint import web
+    from agent.complaint.service import ComplaintService
+    from http.server import ThreadingHTTPServer
+    import threading, urllib.request
+    svc = ComplaintService(PDF, ":memory:", "none")
+    svc.calendar = None
+    res, used = svc.classify("칼 들고 찾아가서 가만 안 둔다", "홍길동", "305")
+    ok, _ = svc.classify("국어 수행평가 점수가 궁금합니다", "김하늘", "101")
+    web.Handler.service, web.Handler.out_root = svc, str(tmp_path)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        page = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}").read().decode("utf-8")
+        assert "상위기관 이첩 검토" in page and f"/complaints/{res['complaint_id']}/transfer.docx" in page and "이첩 사유" in page
+        r = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}/transfer.docx")
+        data = r.read()
+        assert data[:2] == b"PK" and "wordprocessingml" in r.headers["Content-Type"] and "attachment" in r.headers["Content-Disposition"]
+        other = urllib.request.urlopen(base + f"/complaints/{ok['complaint_id']}").read().decode("utf-8")
+        assert "transfer.docx" not in other                                       # 이첩 대상이 아닌 민원에는 없다
+    finally:
+        srv.shutdown()

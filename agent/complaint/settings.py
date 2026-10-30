@@ -22,6 +22,7 @@ class Settings:
     neis_api_key: str           # 나이스 학사일정 API 인증키(없으면 학사일정 직접 답변을 만들지 않음)
     neis_office_code: str       # 시도교육청코드 (ATPT_OFCDC_SC_CODE)
     neis_school_code: str       # 표준학교코드 (SD_SCHUL_CODE)
+    school_name: str            # 이첩 보고서의 학교명(없으면 담당자가 입력)
 
 
 def _code(name):
@@ -42,4 +43,5 @@ def load_settings() -> Settings:
         neis_api_key=os.environ.get("NEIS_API_KEY", ""),
         neis_office_code=_code("NEIS_OFFICE_CODE"),
         neis_school_code=_code("NEIS_SCHOOL_CODE"),
+        school_name=os.environ.get("SCHOOL_NAME", "").strip(),
     )
