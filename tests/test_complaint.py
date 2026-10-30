@@ -684,22 +684,64 @@ def test_transfer_checklist_selects_matching_criteria():
     t = TR.build_transfer(rep)
     assert t["chosen"] == [1, 5] and "1번, 5번" in t["reason_lines"][0] and any("2026-08-01" in l for l in t["history_lines"])
     assert any("법적 조치" in x for x in TR.build_transfer(_esc_result())["request_lines"])         # 기준 3번 -> 법적 조치 협의 요청
-    assert "가만 안 둔다" in TR.checklist(_esc_result(malicious=[{"key": "threat", "label": "협박", "severity": 4, "matched": "가만 안 둔다"}]))[2]["reasons"][0]
+    sent = TR.checklist(_esc_result(malicious=[{"key": "threat", "label": "협박", "severity": 4, "matched": "가만 안"}]))[2]["reasons"][0]
+    assert "'안 그러면 가만 안 둔다.'" in sent                                       # 감지된 말(가만 안)이 아니라 그 문장 전체
+    assert TR._sentences({"text_masked": "첫째 문장입니다. 이런 교사는 자격 없어요, 가만 안 둔다! 끝."},
+                         {"matched": "자격 없; 가만 안"}) == ["이런 교사는 자격 없어요, 가만 안 둔다!"]   # 같은 문장은 한 번만
     none = TR.build_transfer(_esc_result(malicious=[]))
     assert none["chosen"] == [] and "직접 적어" in none["reason_lines"][0]
 
 
-def test_transfer_docx_follows_form(tmp_path):
-    from docx import Document
+def _hwpx_text(path):
+    """hwpx(zip) 안 section0.xml의 모든 글(hp:t)을 줄바꿈으로 이어 붙인다."""
+    import zipfile
+    from lxml import etree
+    with zipfile.ZipFile(path) as z:
+        root = etree.fromstring(z.read("Contents/section0.xml"))
+    return "\n".join(t.text or "" for t in root.iter("{http://www.hancom.co.kr/hwpml/2011/paragraph}t"))
+
+
+def test_transfer_hwpx_fills_the_template_file(tmp_path):
+    import zipfile
     from agent.complaint import transfer as TR
-    t = TR.build_transfer(_esc_result(), school_name="가락고등학교")
-    assert t["category"] == "교무/학사"
-    f = TR.to_docx(t, str(tmp_path / "r.docx"))
-    d = Document(f)
-    text = "\n".join(p.text for p in d.paragraphs) + "\n".join(c.text for tb in d.tables for r in tb.rows for c in r.cells)
-    for label in ("특이민원 관련 지원 요청 보고서", "학교명", "가락고등학교", "제기대상 분류", "☑ 교무/학사", "☐ 기타", "민원관련 학생", "홍길동",
-                  "학급정보", "3학년 5반(305)", "보호자", "민원제기 및 처리내용", "이첩 사유", "교육(지원)청", "이첩 기준 체크리스트", "선택된 기준"):
-        assert label in text, label
+    assert os.path.isfile(TR.TEMPLATE_PATH)
+    prior = [{"id": 3, "created_at": "2026-08-01 10:00", "snippet": "점수 이의", "snippet_raw": "점수 이의", "closed": True}]
+    res = _esc_result(repeat_count=3, history={"same_student": prior, "prior_malicious": 0}, text_masked="점수를 올려라 씨X 가만 안 둔다")
+    t = TR.build_transfer(res, school_name="가락고등학교", prior_texts={3: "점수 이의 신청합니다 원문 그대로"})
+    assert t["category"] == "교무/학사" and t["target"] == "교수학습지원부" and len(t["history_rows"]) == 2
+    f = TR.to_hwpx(t, str(tmp_path / "r.hwpx"))
+    text = _hwpx_text(f)
+    for want in ("가락고등학교", "■ 교무/학사", "□ 기타", "홍길동", "3학년 5반(305)", "2026. 8. 1.",
+                 "점수 이의 신청합니다 원문 그대로", "점수를 올려라 씨X 가만 안 둔다",       # 이번 민원·이전 민원 모두 원문 그대로
+                 "이첩 사유", "1번, 3번"):
+        assert want in text, want
+    assert "(작성예시)" not in text and "쉬는시간 중 담임교사가" not in text and "2025. 9. 30." not in text   # 서식의 예시 문구는 지운다
+    assert "교육(지원)청별 여건에 따라" in text or "서식" in text                       # 서식의 나머지 문구는 그대로
+    with zipfile.ZipFile(f) as z, zipfile.ZipFile(TR.TEMPLATE_PATH) as orig:             # 나머지 파일은 원본 그대로, mimetype이 맨 앞·무압축
+        assert z.namelist() == orig.namelist() and z.infolist()[0].filename == "mimetype" and z.infolist()[0].compress_type == 0
+        for n in orig.namelist():
+            if n != "Contents/section0.xml":
+                assert z.read(n) == orig.read(n), n
+    many = TR.build_transfer(_esc_result(), school_name="x")
+    many["history_rows"] = [(f"2026. 1. {i}.", [f"· 민원 {i}", "   → 처리"]) for i in range(1, 11)]
+    g = TR.to_hwpx(many, str(tmp_path / "m.hwpx"))                                       # 7줄을 넘으면 줄을 늘린다
+    text = _hwpx_text(g)
+    assert "· 민원 10" in text and "· 민원 1\n" in text
+    from lxml import etree
+    with zipfile.ZipFile(g) as z:
+        root = etree.fromstring(z.read("Contents/section0.xml"))
+    hp = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+    tbl = next(root.iter(hp + "tbl"))
+    rows = sorted({int(tc.find(hp + "cellAddr").get("rowAddr")) for tc in tbl.iter(hp + "tc")})
+    assert tbl.get("rowCnt") == "16" and rows == list(range(16))                         # 13줄 + 3줄, 행 번호가 빠짐없이 이어진다
+    label = [tc for tc in tbl.iter(hp + "tc") if tc.find(hp + "cellAddr").get("rowAddr") == "4" and tc.find(hp + "cellAddr").get("colAddr") == "0"][0]
+    assert label.find(hp + "cellSpan").get("rowSpan") == "10"
+
+
+def test_transfer_hwpx_missing_template(tmp_path):
+    from agent.complaint import transfer as TR
+    with pytest.raises(FileNotFoundError):
+        TR.to_hwpx(TR.build_transfer(_esc_result()), str(tmp_path / "x.hwpx"), template=str(tmp_path / "없음.hwpx"))
 
 
 @needs_pdf
@@ -710,7 +752,7 @@ def test_web_transfer_report_download(tmp_path):
     import threading, urllib.request
     svc = ComplaintService(PDF, ":memory:", "none")
     svc.calendar = None
-    res, used = svc.classify("칼 들고 찾아가서 가만 안 둔다", "홍길동", "305")
+    res, used = svc.classify("칼 들고 찾아가서 수행평가 점수 올려 놔라, 가만 안 둔다", "홍길동", "305")
     ok, _ = svc.classify("국어 수행평가 점수가 궁금합니다", "김하늘", "101")
     web.Handler.service, web.Handler.out_root = svc, str(tmp_path)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
@@ -718,11 +760,74 @@ def test_web_transfer_report_download(tmp_path):
     base = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
         page = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}").read().decode("utf-8")
-        assert "상위기관 이첩 검토" in page and f"/complaints/{res['complaint_id']}/transfer.docx" in page and "이첩 사유" in page
-        r = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}/transfer.docx")
+        from agent.complaint.rules import DEPT_DESC
+        assert DEPT_DESC.get(res["department"], "(없음)") not in page and "→ " + res["department"] + ": " not in page                           # 분류(담당 부서) 아래 회색 설명은 보이지 않는다
+        assert "상위기관 이첩 검토" in page and f"/complaints/{res['complaint_id']}/transfer.hwpx" in page and "이첩 사유" in page
+        r = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}/transfer.hwpx")
         data = r.read()
-        assert data[:2] == b"PK" and "wordprocessingml" in r.headers["Content-Type"] and "attachment" in r.headers["Content-Disposition"]
+        assert data[:2] == b"PK" and "hwpx" in r.headers["Content-Type"] and ".hwpx" in r.headers["Content-Disposition"]
         other = urllib.request.urlopen(base + f"/complaints/{ok['complaint_id']}").read().decode("utf-8")
-        assert "transfer.docx" not in other                                       # 이첩 대상이 아닌 민원에는 없다
+        assert "transfer.hwpx" not in other                                       # 이첩 대상이 아닌 민원에는 없다
     finally:
         srv.shutdown()
+
+
+class _FakeLLM:
+    available = True
+
+    def __init__(self, out):
+        self.out = out
+
+    def chat(self, system, user, json_mode=False):
+        if isinstance(self.out, Exception):
+            raise self.out
+        return self.out
+
+
+def test_soften_rules_llm_and_fallbacks():
+    from agent.complaint import soften as SF
+    rough = "담임이 무능한 교사라 가만 안 둔다. 수행평가 점수를 확인해 주세요."
+    soft, n = SF.mask_rough(rough)
+    assert n >= 1 and SF.MASK in soft and "수행평가 점수를 확인해 주세요" in soft and "가만 안" not in soft and "둔다" not in soft   # 요구 사항은 남기고 거친 표현만 가림(문장 끝까지)
+    assert SF.soften(NullLLM(), rough)[1] == "rules"
+    assert SF.soften(NullLLM(), "수행평가 점수를 확인해 주세요") == ("수행평가 점수를 확인해 주세요", "none")
+    good = "담임 교사에 대한 불만이 있으며 수행평가 점수 확인을 요청합니다. (거친 표현이 있었음)"
+    assert SF.soften(_FakeLLM(good), rough) == (good, "llm")
+    assert SF.soften(_FakeLLM(""), rough)[1] == "rules"                               # 빈 응답 -> 규칙으로
+    assert SF.soften(_FakeLLM(RuntimeError("down")), rough)[1] == "rules"            # 호출 실패 -> 규칙으로
+    assert SF.soften(_FakeLLM("가"), rough)[1] == "rules"                             # 길이가 너무 달라도 버린다
+    again = SF.soften(_FakeLLM("가만 안 둔다 라고 했고 점수 확인을 요청합니다 입니다 입니다"), rough)
+    assert again[1] == "llm" and "가만 안" not in again[0]                       # 순화문에 거친 표현이 남으면 마저 가린다
+
+
+@needs_pdf
+def test_screens_show_soft_text_first_and_original_on_demand(tmp_path):
+    from agent.complaint import web
+    from agent.complaint.service import ComplaintService
+    from http.server import ThreadingHTTPServer
+    import threading, urllib.request
+    svc = ComplaintService(PDF, ":memory:", "none")
+    svc.calendar = None
+    rough = "담임 때문에 우리 애가 힘들대요. 이런 무능한 교사는 자격 없어요, 가만 안 둔다."
+    res, _ = svc.classify(rough, "홍길동", "305")
+    assert res["text_masked"] == rough and res["text_soft_method"] == "rules" and "가만 안" not in res["text_soft"]
+    web.Handler.service, web.Handler.out_root = svc, str(tmp_path)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        page = urllib.request.urlopen(base + f"/complaints/{res['complaint_id']}").read().decode("utf-8")
+        head, _, tail = page.partition("원문 보기")
+        assert "[부적절한 표현]" in head and "가만 안" not in head           # 원문 보기 위(기본 화면)에는 순화문만
+        assert "가만 안" in tail and "<details" in page                      # 원문은 [원문 보기] 안에 있다
+        home = urllib.request.urlopen(base + "/").read().decode("utf-8")
+        lst = home.split("<h2>민원 목록</h2>")[1]                                   # (위쪽 입력 예시 문구는 제외)
+        assert "가만 안" not in lst and "[부적절한 표현]" in lst            # 목록 내용 요약도 순화문
+    finally:
+        srv.shutdown()
+    s = Store()                                                                      # 순화문이 없는 이전 민원
+    legacy = _fake_result("x", route="HANDLE")
+    legacy["text_masked"] = rough
+    cid = s.save(legacy, None, None, None, False)
+    assert "가만 안" not in s.get_complaint(cid)["result"]["text_soft"]
+    assert "가만 안" not in s.list_complaints()[0][0]["text"]

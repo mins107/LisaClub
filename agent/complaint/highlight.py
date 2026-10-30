@@ -148,6 +148,21 @@ def _marked_text(result):
     return "".join(parts)
 
 
+def _original_box(result):
+    """민원 내용: 기본은 순화문, 원문(거친 표현 강조 포함)은 [원문 보기]를 눌러야 펼쳐진다."""
+    from .soften import METHOD_LABEL
+    soft = result.get("text_soft") or result["text_masked"]
+    method = result.get("text_soft_method", "none")
+    legend = "".join(f'<span><mark style="background:{CSS[k]}">&nbsp;&nbsp;&nbsp;</mark> {n}</span>'
+                     for k, n in ROLE_NAME.items() if k in ("reject", "malicious"))
+    return (f'<div class="box"><h3>민원 내용 <small>(순화문 · 개인정보 마스킹)</small></h3>'
+            f'<pre class="orig">{html.escape(soft)}</pre>'
+            f'<p class="foot" style="margin:6px 0">{html.escape(METHOD_LABEL.get(method, ""))}. 판정은 원문으로 합니다.</p>'
+            f'<details class="drawer"><summary>원문 보기 <small>(폭언·욕설이 포함될 수 있습니다)</small></summary>'
+            f'<div class="drawer-body"><pre class="orig">{_marked_text(result)}</pre>'
+            f'<div class="legend" style="margin-top:8px">{legend}</div></div></details></div>')
+
+
 def _tags(labels):
     """근거 번호. 누르면 오른쪽 매뉴얼 근거 카드로 이동한다."""
     return "".join(f'<a class="tag" href="#ev-{html.escape(l)}">{html.escape(l)}</a>' for l in labels or [])
@@ -190,7 +205,7 @@ def _transfer_box(result, href):
         f'<li class="ck-{"y" if c["state"] in ("해당", "해당 가능") else "n"}"><b>{STATE_MARK[c["state"]]} {c["no"]}. {html.escape(c["state"])}</b> '
         f'{html.escape(c["text"])}<div class="sm">{"<br>".join(html.escape(r) for r in c["reasons"])}</div></li>' for c in t["checklist"])
     why = "<br>".join(html.escape(x) for x in t["reason_lines"])
-    link = (f'<a class="btn" href="{html.escape(href)}">이첩 보고서(.docx) 내려받기</a>' if href else
+    link = (f'<a class="btn" href="{html.escape(href)}">이첩 보고서(.hwpx) 내려받기</a>' if href else
             '<span class="foot">저장된 민원의 상세 화면에서 보고서 파일을 내려받을 수 있습니다.</span>')
     return (f'<div class="box"><h3>상위기관 이첩 검토 (매뉴얼 12쪽 이첩 기준 · 55쪽 보고서 서식)</h3>'
             f'<div class="banner" style="margin-bottom:8px"><b>이첩 사유</b><br>{why}</div>'
@@ -277,15 +292,13 @@ def render_body(result, pdf_href=None, homeroom_footer="", transfer_href=""):
     urg = result["urgency"]
     tiles = [("긴급도", f'<span class="pill {URGENCY_CLASS.get(urg, "mid")}">{html.escape(urg)}</span>'),
              ("민원 대상 학생", html.escape(result.get("student") or "학생 미상")),
-             ("분류 (담당 부서)", html.escape(result["department"]) + (f'<div class="foot" style="margin:2px 0 0;font-weight:400">{html.escape(result["department_reason"])}</div>' if result.get("department_reason") else "")), ("처리 담당", html.escape(result["handler"])),
+             ("분류 (담당 부서)", html.escape(result["department"])), ("처리 담당", html.escape(result["handler"])),
              ("처리 기한", html.escape(result["deadline"])), ("동일·유사 민원", f"{result['repeat_count']}회째"),
              ("민원 번호", f"#{result['complaint_id']}" if result.get("complaint_id") else "저장 안 함")]
     dl = "".join(f'<div class="tile"><dt>{k}</dt><dd>{v}</dd></div>' for k, v in tiles)
     review = ('<div class="banner"><b>사람 확인 필요</b> · 자동 판정이 확실하지 않거나 상위 조치가 필요한 건입니다. '
               '아래 사유와 매뉴얼 근거를 확인한 뒤 처리하세요.</div>') if result["needs_human_review"] else ""
     notes = "".join(f'<span class="chip note">{html.escape(n)}</span>' for n in result["notes"])
-    legend = "".join(f'<span><mark style="background:{CSS[k]}">&nbsp;&nbsp;&nbsp;</mark> {n}</span>'
-                     for k, n in ROLE_NAME.items() if k in ("reject", "malicious"))
     copy = lambda i: f'<button type="button" class="btn" data-copy="{i}">복사</button>'  # noqa: E731
     transfer = _transfer_box(result, transfer_href) if result["route"] == "ESCALATE" or transfer_href else ""
     return f"""
@@ -295,8 +308,7 @@ def render_body(result, pdf_href=None, homeroom_footer="", transfer_href=""):
 <div class="box"><h2>지금 할 일 <small>(해 둔 항목은 체크하세요)</small></h2>{_todo(result)}</div>
 {_homeroom_box(result, homeroom_footer)}
 <div class="cols"><div class="col">
-<div class="box"><h3>민원 원문 <small>(개인정보 마스킹)</small></h3><pre class="orig">{_marked_text(result)}</pre>
-<div class="legend" style="margin-top:10px">{legend}</div></div>
+{_original_box(result)}
 <div class="box"><h3>분류 사유</h3>
 <div class="rrow"><div class="sec-title">거부·종결 가능 사유</div>{_chips(result['reject'], 'reject')}</div>
 <div class="rrow"><div class="sec-title">특이민원 유형</div>{_chips(result['malicious'], 'mal', True)}</div>

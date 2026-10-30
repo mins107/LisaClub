@@ -84,7 +84,8 @@ def _form(v=None, error=""):
     samples = "".join(f'<button type="button" class="btn" data-sample="{html.escape(t, quote=True)}">{html.escape(n)}</button>'
                       for n, t in SAMPLES)
     return f"""{err}<form method="post" action="/classify" id="f" class="box">
-<h2>＋ 새 민원 입력</h2>
+<h2>＋ 새 민원 입력 <small>(시연용)</small></h2>
+<p class="foot" style="margin:0 0 8px">실제 운영에서는 시스템이 민원 원문을 자동으로 받아 분류합니다(<code>POST /api/classify</code>). 담당자 화면에는 순화문이 먼저 보이고 원문은 [원문 보기]로만 열립니다.</p>
 <label class="field-label" for="t">접수된 민원 내용 <span class="req">필수</span></label>
 <textarea id="t" name="text" maxlength="{MAX_TEXT}" placeholder="접수한 민원 내용을 그대로 붙여넣으세요." required>{g('text')}</textarea>
 <div class="ta-foot"><span id="cnt">0 / {MAX_TEXT}자</span><span>예시 {samples}</span></div>
@@ -177,9 +178,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/notices":
             return self._json(200, [{**p, "start": p["start"].isoformat(), "end": p["end"].isoformat()}
                                     for p in notice_status(self.service.store.list_notice_plans())])
-        m = re.match(r"^/complaints/(\d+)/transfer\.docx$", path)
+        m = re.match(r"^/complaints/(\d+)/transfer\.hwpx$", path)
         if m:
-            return self._transfer_docx(int(m.group(1)))
+            return self._transfer_report(int(m.group(1)))
         m = re.match(r"^/cases/([^/]+)/([^/]+)$", path)
         if m and CASE_ID.match(m.group(1)) and m.group(2) in FILES:
             f = os.path.join(self.out_root, m.group(1), m.group(2))
@@ -256,18 +257,21 @@ class Handler(BaseHTTPRequestHandler):
                   'DB에 저장하지 않아 대시보드에 나타나지 않고 처리 경과도 기록할 수 없습니다.</div>')
         self._send(200, _layout(notice + render_body(res, self._pdf_href(case_id))))
 
-    def _transfer_docx(self, cid):
+    def _transfer_report(self, cid):
         c = self.service.store.get_complaint(cid)
         if c is None:
             return self._not_found()
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            f = os.path.join(d, "transfer.docx")
-            self.service.transfer_report(c, f)
+            f = os.path.join(d, "transfer.hwpx")
+            try:
+                self.service.transfer_report(c, f)
+            except FileNotFoundError as e:
+                return self._detail(cid, 404, error=str(e))
             data = open(f, "rb").read()
-        name = quote(f"특이민원_지원요청보고서_{cid}.docx")
+        name = quote(f"특이민원_지원요청보고서_{cid}.hwpx")
         self.send_response(200)
-        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.send_header("Content-Type", "application/haansofthwpx")
         self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{name}")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()

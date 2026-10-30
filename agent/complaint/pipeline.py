@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from . import rules as R
+from . import soften as SF
 from . import schedule as SC
 from . import tasks as TK
 from . import notices as NT
@@ -204,6 +205,7 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
       - 종결 민원 직후 재접촉 -> 거부 가능 (PDF 11쪽)
       - 과거 악성 이력이 있는 민원인의 재접촉 -> 1차·2차 대응 (PDF 49쪽), 반복 시 접촉 제한 검토 (PDF 26쪽)"""
     text = mask_pii(text)
+    soft, soft_method = SF.soften(llm, text)       # 담당자 화면용 순화문. 판정은 원문(text)으로 한다
     history = store.find_history(student, text)
     prior = history["same_student"]
     repeat = len(prior) + 1
@@ -268,7 +270,7 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         handler = "민원대응팀" if simple else "담당(담임) 교사 협조 + 민원대응팀 총괄"
         deadline = "즉시" if simple else "7일 이내"
         if "담임" in handler:
-            homeroom = _homeroom_handoff(llm, text, student, dept, deadline, ev_assign, ev_due)
+            homeroom = _homeroom_handoff(llm, soft, student, dept, deadline, ev_assign, ev_due)
     else:
         handler, deadline = "관리자(교장·교감) 면담, 민원대응팀 공동 대응", "14일 이내(연장 가능)"
 
@@ -339,7 +341,7 @@ def run(text, student, retr, store, llm, *, received_at=None, call_minutes=None,
         "schedule": sched, "notices": notice_hits,
         "llm_judge": judge or None, "llm_used": llm.available,
         "needs_human_review": route != "HANDLE" or pm > 0 or any(not h["confident"] for h in hit_out),
-        "text_masked": text,
+        "text_masked": text, "text_soft": soft, "text_soft_method": soft_method,
         "history": {"student": history["student"], "same_student": prior, "similar_others": history["similar_others"],
                     "recent_closed": history["recent_closed"], "prior_malicious": pm},
         "complaint_id": None,

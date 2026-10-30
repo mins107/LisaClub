@@ -28,6 +28,7 @@ from sqlalchemy.pool import StaticPool
 
 from .retriever import tokenize
 from .rules import DEPT_NAMES, UNASSIGNED
+from .soften import mask_rough
 
 SAME_STUDENT_SIM = 0.3    # 같은 학생의 과거 민원이 "동일·유사"로 보이는 기준(자카드 유사도)
 OTHER_STUDENT_SIM = 0.5   # 다른 학생의 민원은 더 비슷할 때만 참고용으로 보여 준다
@@ -59,6 +60,7 @@ complaints = Table(
     Column("received_at", DateTime),                       # 접수 시각(입력 시)
     Column("call_minutes", Float),                         # 통화·면담 시간(분)
     Column("text_masked", Text, nullable=False),           # 개인정보(전화번호 등) 마스킹 후 원문
+    Column("text_soft", Text),                             # 담당자 화면용 순화문(없으면 규칙으로 가려서 보여 줌)
     Column("route", String(16), nullable=False, index=True),   # REJECTABLE | HANDLE | ESCALATE
     Column("route_label", String(100), nullable=False),
     Column("urgency", String(8), nullable=False),
@@ -196,6 +198,11 @@ def _url(target: str) -> str:
     return "sqlite:///" + target
 
 
+def _soft(row):
+    """담당자 화면에 보여 줄 순화문. 저장된 순화문이 없는 이전 민원은 거친 표현만 규칙으로 가려서 쓴다."""
+    return row["text_soft"] if row["text_soft"] else mask_rough(row["text_masked"])[0]
+
+
 def _snippet(text_, n=60):
     return text_[:n] + ("…" if len(text_) > n else "")
 
@@ -293,7 +300,7 @@ class Store:
             closed = r["route"] == "REJECTABLE" or bool(r["closed_by_repeat"])
             item = {"id": r["id"], "created_at": _local(r["created_at"]),
                     "student": f"{r['s_name']}({r['s_class']})" if r["s_name"] else None,
-                    "route": r["route"], "similarity": round(sim, 2), "snippet": _snippet(r["text_masked"]),
+                    "route": r["route"], "similarity": round(sim, 2), "snippet": _snippet(_soft(r)), "snippet_raw": _snippet(r["text_masked"], 400),
                     "closed": closed}
             if student_id and r["student_id"] == student_id:
                 if r["route"] == "ESCALATE":
@@ -321,7 +328,7 @@ class Store:
             cid = c.execute(complaints.insert().values(
                 student_id=student_id,
                 received_at=datetime.fromisoformat(received_at) if received_at else None,
-                call_minutes=call_minutes, text_masked=result["text_masked"],
+                call_minutes=call_minutes, text_masked=result["text_masked"], text_soft=result.get("text_soft"),
                 route=result["route"], route_label=result["route_label"], urgency=result["urgency"],
                 department=result["department"], handler=result["handler"], deadline=result["deadline"],
                 repeat_count=result["repeat_count"], closed_by_repeat=closed_by_repeat,
@@ -351,6 +358,9 @@ class Store:
                             .order_by(complaint_events.c.id)).mappings().all()
         result = json.loads(r["result_json"])
         result["complaint_id"] = r["id"]
+        if not result.get("text_soft"):         # 순화문이 생기기 전에 저장된 민원
+            result["text_soft"], n = mask_rough(r["text_masked"])
+            result["text_soft_method"] = "rules" if n else "none"
         events = [{"created_at": _local(e["created_at"]), "kind": e["kind"], "status": e["status"],
                    "note": e["note"], "actor": e["actor"]} for e in evs]
         if not events:      # 처리 경과 기능이 생기기 전에 저장된 민원
@@ -422,7 +432,7 @@ class Store:
             cond.append(complaints.c.homeroom_sent_at.is_not(None))
         if q and q.strip():
             like = "%" + q.strip().replace("%", "").replace("_", "") + "%"
-            cond.append(or_(complaints.c.text_masked.ilike(like), students.c.name.ilike(like)))
+            cond.append(or_(complaints.c.text_masked.ilike(like), complaints.c.text_soft.ilike(like), students.c.name.ilike(like)))
         with self.engine.connect() as c:
             rows = c.execute(
                 select(complaints, students.c.name.label("s_name"), students.c.class_no.label("s_class"))
@@ -435,7 +445,7 @@ class Store:
                 continue
             out.append({"id": r["id"], "created_at": _local(r["created_at"]), "updated_at": _local(r["updated_at"]),
                         "student": f"{r['s_name']}({r['s_class']})" if r["s_name"] else None,
-                        "text": _snippet(r["text_masked"], 70), "route": r["route"], "urgency": r["urgency"],
+                        "text": _snippet(_soft(r), 70), "route": r["route"], "urgency": r["urgency"],
                         "department": r["department"], "handler": r["handler"], "deadline": r["deadline"],
                         "status": r["status"], "due": due, "overdue": over,
                         "homeroom_needed": bool(r["homeroom_needed"]), "homeroom_sent_at": _local(r["homeroom_sent_at"]),
@@ -558,3 +568,11 @@ class Store:
             c.execute(notice_sends.insert().values(plan_id=plan_id, season_year=season_year, sent_at=now or _now(),
                                                    actor=actor or None, note=note or None))
         return True
+
+    def get_texts(self, ids):
+        """민원 번호 -> 마스킹된 원문. 이첩 보고서에 이전 민원의 원문을 적을 때 쓴다."""
+        if not ids:
+            return {}
+        with self.engine.connect() as c:
+            return {r.id: r.text_masked for r in c.execute(select(complaints.c.id, complaints.c.text_masked)
+                                                           .where(complaints.c.id.in_(list(ids))))}
